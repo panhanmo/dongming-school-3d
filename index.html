@@ -1,0 +1,1261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<!-- viewport-fit=cover 启用安全区域；禁止用户缩放，避免双指手势与页面缩放冲突 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+<title>东明学校数字校园</title>
+<style>
+  /* ============================ 全局基础样式 ============================ */
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden;
+    background: #000; color: #fff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    /* 禁止系统文本选择，避免长按误选 */
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+  /* 3D 渲染画布：全屏铺底，touch-action:none 由 JS 配合 passive:false 双保险阻止默认手势 */
+  #canvas {
+    position: fixed; inset: 0; width: 100%; height: 100%; display: block;
+    touch-action: none;
+  }
+
+  /* ============================ 加载遮罩 ============================ */
+  #loading {
+    position: fixed; inset: 0; z-index: 50;
+    background: #000;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.8s ease;
+  }
+  #loading.fade-out { opacity: 0; pointer-events: none; }
+  #loading .welcome { font-size: 22px; font-weight: 600; letter-spacing: 2px; margin-bottom: 14px; text-align: center; padding: 0 20px; }
+  #loading .loading-text { font-size: 14px; opacity: 0.8; margin-bottom: 28px; }
+  #loading .bar { width: 60%; max-width: 320px; height: 2px; background: rgba(255,255,255,0.2); border-radius: 2px; overflow: hidden; }
+  #loading .bar > i { display: block; height: 100%; width: 0%; background: #fff; transition: width 0.2s linear; }
+  #loading .pct { font-size: 12px; opacity: 0.6; margin-top: 10px; }
+
+  /* ============================ 操作提示浮层 ============================ */
+  #hint {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 40;
+    padding: calc(env(safe-area-inset-top) + 14px) 16px 14px;
+    text-align: center; font-size: 13px; line-height: 1.6;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.35), rgba(0,0,0,0));
+    opacity: 0; transition: opacity 0.6s ease; pointer-events: none;
+  }
+  #hint.show { opacity: 1; }
+
+  /* ============================ 键鼠按键说明（桌面） ============================ */
+  .keys-help {
+    position: fixed; z-index: 35; pointer-events: none;
+    left: calc(env(safe-area-inset-left) + 22px);
+    bottom: calc(env(safe-area-inset-bottom) + 26px);
+    padding: 14px 16px;
+    background: rgba(0,0,0,0.28);
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 12px;
+    backdrop-filter: blur(6px);
+    color: #fff; font-size: 13px; line-height: 1.9;
+    display: none; /* 仅在键鼠设备上由 JS 打开 */
+    transition: opacity 0.3s ease;
+  }
+  .keys-help.show { display: block; }
+  .keys-help.locked { opacity: 0; }
+  .keys-help .k-row { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .keys-help .k-row > span { opacity: 0.85; margin-left: 4px; }
+  .keys-help kbd {
+    display: inline-block; min-width: 22px; text-align: center;
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.28);
+    border-bottom-width: 2px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: #fff;
+    margin-right: 2px;
+  }
+  .keys-help .k-tip {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255,255,255,0.12);
+    color: rgba(255,255,255,0.75);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  /* ============================ 虚拟摇杆（移动端） ============================ */
+  #joystick {
+    position: fixed; z-index: 30;
+    left: calc(env(safe-area-inset-left) + 26px);
+    bottom: calc(env(safe-area-inset-bottom) + 30px);
+    width: 100px; height: 100px; border-radius: 50%;
+    background: rgba(0,0,0,0.15);
+    border: 1px solid rgba(255,255,255,0.25);
+    touch-action: none; display: none;
+  }
+  #joystick.active { display: block; }
+  #knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 40px; height: 40px; margin: -20px 0 0 -20px;
+    border-radius: 50%; background: rgba(255,255,255,0.55);
+    transform: translate(0,0);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  /* 锁定指针时隐藏 Canvas 上的光标；Esc 退出后浏览器自动恢复 */
+  #canvas.locked, body.pl-locked #canvas { cursor: none !important; }
+
+  /* ============================ 拍照按钮 ============================ */
+  #photoBtn {
+    position: fixed; z-index: 30;
+    right: calc(env(safe-area-inset-right) + 22px);
+    bottom: calc(env(safe-area-inset-bottom) + 26px);
+    width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(0,0,0,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff; font-size: 24px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; backdrop-filter: blur(6px);
+    transition: transform 0.15s ease, background 0.2s ease;
+  }
+  #photoBtn:active { transform: scale(0.92); background: rgba(0,0,0,0.3); }
+
+  /* ============================ 文字输入模态框 ============================ */
+  #modal {
+    position: fixed; inset: 0; z-index: 60;
+    background: rgba(0,0,0,0.55);
+    display: none; align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  #modal.open { display: flex; }
+  #modal .card {
+    width: 100%; max-width: 440px;
+    background: rgba(20,20,20,0.92);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 12px; padding: 18px;
+  }
+  #modal .prompt { font-size: 14px; opacity: 0.85; margin-bottom: 10px; }
+  #modal textarea {
+    width: 100%; height: 70px; resize: none;
+    background: rgba(255,255,255,0.08); color: #fff;
+    border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
+    padding: 10px; font-size: 15px; line-height: 1.4;
+    /* 模态框内允许选择与输入 */
+    -webkit-user-select: text; user-select: text;
+  }
+  #modal .preview-wrap { margin: 12px 0; text-align: center; }
+  #modal .preview-wrap canvas {
+    max-width: 100%; max-height: 46vh; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  #modal .btns { display: flex; gap: 10px; }
+  #modal .btns button {
+    flex: 1; padding: 11px 0; font-size: 14px;
+    border: none; border-radius: 8px; cursor: pointer;
+  }
+  #modal .btn-save { background: rgba(255,255,255,0.15); color: #fff; }
+  #modal .btn-with { background: #fff; color: #000; }
+
+  /* ============================ 错误 / 不支持提示 ============================ */
+  #error, #nowebgl {
+    position: fixed; inset: 0; z-index: 70;
+    background: #000; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 30px;
+  }
+  #error.show, #nowebgl.show { display: flex; }
+  #error .msg, #nowebgl .msg { font-size: 15px; opacity: 0.85; margin-bottom: 20px; line-height: 1.6; }
+  #error button {
+    padding: 10px 22px; font-size: 14px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.4); background: rgba(255,255,255,0.1); color: #fff; cursor: pointer;
+  }
+
+  /* ============================ 移动端分享降级全屏图 ============================ */
+  #shareView {
+    position: fixed; inset: 0; z-index: 80; background: #000;
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+  }
+  #shareView.show { display: flex; }
+  #shareView img { max-width: 100%; max-height: 86vh; }
+  #shareView .tip { margin-top: 14px; font-size: 14px; opacity: 0.8; }
+  #shareView .close { position: absolute; top: calc(env(safe-area-inset-top) + 12px); right: 16px; font-size: 20px; background: none; border: none; color: #fff; cursor: pointer; }
+
+  /* ============================ 设置面板 ============================ */
+  #settingsToggle {
+    position: fixed; z-index: 35;
+    top: calc(env(safe-area-inset-top) + 12px);
+    right: calc(env(safe-area-inset-right) + 16px);
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(0,0,0,0.25);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: #fff; font-size: 20px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; backdrop-filter: blur(6px);
+    transition: transform 0.15s ease, background 0.2s ease;
+  }
+  #settingsToggle:active { transform: scale(0.92); background: rgba(0,0,0,0.4); }
+  #settingsPanel {
+    position: fixed; z-index: 36;
+    top: calc(env(safe-area-inset-top) + 60px);
+    right: calc(env(safe-area-inset-right) + 16px);
+    width: 240px;
+    background: rgba(20,20,20,0.92);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 10px; padding: 14px;
+    display: none; backdrop-filter: blur(8px);
+  }
+  #settingsPanel.open { display: block; }
+  #settingsPanel .row { margin-bottom: 12px; }
+  #settingsPanel .row:last-child { margin-bottom: 0; }
+  #settingsPanel label { display: block; font-size: 12px; opacity: 0.8; margin-bottom: 4px; }
+  #settingsPanel .row input[type=range] { width: 100%; }
+  #settingsPanel .row .val { font-size: 12px; opacity: 0.6; float: right; }
+</style>
+</head>
+<body>
+  <!-- 加载遮罩：welcomeText + loadingText + 进度条 -->
+  <div id="loading">
+    <div class="welcome" id="welcomeText">欢迎回家——东明学校</div>
+    <div class="loading-text" id="loadingText">正在为你打开校门...</div>
+    <div class="bar"><i id="progressBar"></i></div>
+    <div class="pct" id="progressPct"></div>
+  </div>
+
+  <!-- 3D 渲染画布 -->
+  <canvas id="canvas"></canvas>
+
+  <!-- 操作提示（通用短暂浮层） -->
+  <div id="hint"></div>
+
+  <!-- 键鼠按键说明（仅桌面显示） -->
+  <div id="keysHelp" class="keys-help">
+    <div class="k-row"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><span>移动</span></div>
+    <div class="k-row"><kbd>Q</kbd><kbd>E</kbd><span>下降/上升</span></div>
+    <div class="k-row"><kbd>鼠标拖拽</kbd><span>旋转视角</span></div>
+    <div class="k-row"><kbd>1</kbd>–<kbd>6</kbd><span>切换前/后/左/右/顶/底 视角</span></div>
+    <div class="k-row"><kbd>F</kbd><span>翻转俯仰</span><kbd>G</kbd><span>旋转180°</span></div>
+    <div class="k-row"><kbd>R</kbd><span>重置视角</span></div>
+  </div>
+
+  <!-- 虚拟摇杆（仅触屏设备显示） -->
+  <div id="joystick"><div id="knob"></div></div>
+
+  <!-- 拍照按钮 -->
+  <button id="photoBtn" aria-label="拍照">📷</button>
+
+  <!-- 设置面板（渲染精度 / 移动速度 / 鼠标灵敏度） -->
+  <button id="settingsToggle" aria-label="设置">⚙</button>
+  <div id="settingsPanel">
+    <div class="row">
+      <label>渲染精度 <span class="val" id="renderScaleVal">1.0</span></label>
+      <input type="range" id="renderScaleSlider" min="0.5" max="2.0" step="0.1" value="1.0" />
+    </div>
+    <div class="row">
+      <label>移动速度 <span class="val" id="moveSpeedVal">3.0</span></label>
+      <input type="range" id="moveSpeedSlider" min="1" max="20" step="0.5" value="3.0" />
+    </div>
+    <div class="row">
+      <label>鼠标灵敏度 <span class="val" id="lookSensVal">0.006</span></label>
+      <input type="range" id="lookSensSlider" min="0.001" max="0.02" step="0.001" value="0.006" />
+    </div>
+  </div>
+
+  <!-- 文字输入模态框 -->
+  <div id="modal">
+    <div class="card">
+      <div class="prompt" id="photoPrompt">写下你想留在东明的话</div>
+      <textarea id="photoInput" maxlength="30" placeholder=""></textarea>
+      <div class="preview-wrap"><canvas id="previewCanvas"></canvas></div>
+      <div class="btns">
+        <button class="btn-save" id="btnSave">直接保存</button>
+        <button class="btn-with" id="btnWith">加上这句话</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 加载错误 -->
+  <div id="error">
+    <div class="msg" id="errorMsg">校门暂时打不开，请稍后重试</div>
+    <button id="refreshBtn">刷新重试</button>
+  </div>
+
+  <!-- WebGL 不支持 -->
+  <div id="nowebgl">
+    <div class="msg">你的浏览器不支持 WebGL，请使用 Chrome / Edge / Safari 打开</div>
+  </div>
+
+  <!-- 移动端分享降级：全屏大图 + 长按保存 -->
+  <div id="shareView">
+    <button class="close" id="shareClose">×</button>
+    <img id="shareImg" alt="纪念照" />
+    <div class="tip" id="shareTip">长按图片保存到相册</div>
+  </div>
+
+<script type="module">
+/* =========================================================================
+ * 东明学校数字校园 —— 3D 高斯泼溅纪念页
+ *
+ * 渲染库：gsplat.js（dylanebert/gsplat.js，npm: gsplat），全局 SPLAT 对象
+ *   说明：技术文档中写作 "mkkellogg/gsplat.js"，但文档给出的全部 API 签名
+ *        （SPLAT.Loader.LoadAsync / SPLAT.Scene / SPLAT.WebGLRenderer /
+ *         SPLAT.OrbitControls / 全局 SPLAT）与 dylanebert/gsplat.js 完全一致，
+ *        且该库不依赖 Three.js，符合 "禁止混入 Three.js API" 的强制约束。
+ *
+ * 八条强制约束落实位置见各处注释【约束N】。
+ * ========================================================================= */
+
+/* ----------------------------- 全局状态 -------------------------------- */
+let config = null;          // 来自 config.json 的全部参数与文案
+let SPLAT = null;           // gsplat.js 库（window.SPLAT）
+let renderer = null;        // SPLAT.WebGLRenderer
+let scene = null;           // SPLAT.Scene
+let camera = null;          // SPLAT.Camera
+const canvas = document.getElementById('canvas');
+
+// 直接相机控制状态【约束7】不使用 OrbitControls，直接操作 camera.position / camera.rotation
+let yaw = 0;                // 偏航（绕 Y 轴，弧度）；yaw=0 时看向 +Z
+let pitch = 0;              // 俯仰（绕 X 轴，弧度）；pitch>0 看向下方，pitch<0 看向上方
+let defaultView = { x: 0, y: 5, z: 30, yaw: Math.PI, pitch: 0 }; // 初始视角缓存（R 键复位用）
+
+let renderScale = 1.0;                 // 运行时渲染缩放
+let isPortrait = true;                 // 横竖屏，供拍照文字排版使用
+let modalOpen = false;                 // 模态框打开时跳过触摸阻止逻辑
+const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0;
+const isWeChatOrQQ = /MicroMessenger|QQ\//i.test(navigator.userAgent);
+
+// 输入状态
+const keys = { w: false, a: false, s: false, d: false, q: false, e: false };
+
+// 移动端触摸旋转 / 双指升降状态
+const look = { dragging: false, lastX: 0, lastY: 0 };
+const pinch = { active: false, lastDist: 0, lastMidY: 0 };
+
+const joystick = { active: false, dx: 0, dy: 0, mag: 0 }; // dx,dy 归一化 -1..1，dy 上为正
+
+// FPS 监测
+let fpsFrames = 0, fpsLast = performance.now(), fpsAvg = 60;
+
+// 渲染循环
+let lastFrameTime = performance.now();
+let rafId = null;
+
+/* ----------------------------- 工具函数 -------------------------------- */
+const $ = (id) => document.getElementById(id);
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+// 设备类型：用于操作提示文案与初始渲染缩放
+function detectMobile() {
+  return /Android|iPhone|iPad|iPod|Mobile|Windows Phone/i.test(navigator.userAgent) || isTouchDevice;
+}
+const isMobile = detectMobile();
+
+// 检测 WebGL2 可用性（同时预创建带 preserveDrawingBuffer 的上下文）
+function acquireWebGL2Context() {
+  // 【约束4】preserveDrawingBuffer 只能在创建 WebGLRenderer 时设定一次，运行时不修改。
+  // gsplat 的 WebGLRenderer 内部以 {antialias:false} 调用 getContext；为使截图可用，
+  // 此处预先以 {antialias:false, preserveDrawingBuffer:true} 取得上下文，
+  // 后续 WebGLRenderer 再次 getContext 将返回同一上下文（属性以首次创建为准）。
+  const ctx = canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true });
+  return ctx;
+}
+
+/* ----------------------- 1. 加载 gsplat.js 库 -------------------------- */
+// 本地优先（libs/gsplat.js），失败回退 jsDelivr CDN，保证开箱即用与可本地化。
+async function loadGSplat() {
+  const attempts = [
+    './libs/gsplat.js',                                                 // 本地（spec 文件结构）
+    'https://cdn.jsdelivr.net/npm/gsplat@1.2.9/dist/index.es.js'        // CDN 回退
+  ];
+  let lastErr = null;
+  for (const url of attempts) {
+    try {
+      const mod = await import(url);
+      SPLAT = mod;
+      window.SPLAT = SPLAT; // 暴露全局 SPLAT 对象【约束1】
+      return;
+    } catch (e) {
+      lastErr = e;
+      console.warn('[gsplat] 加载失败，尝试下一来源：', url, e);
+    }
+  }
+  throw lastErr;
+}
+
+/* ----------------------------- 2. 加载配置 ----------------------------- */
+async function loadConfig() {
+  const res = await fetch('config.json', { cache: 'no-cache' });
+  if (!res.ok) throw new Error('config.json 加载失败: ' + res.status);
+  return res.json();
+}
+
+/* -------------------- 3. 应用文案到 DOM（禁止硬编码）------------------- */
+function applyTexts() {
+  document.title = config.page.title;
+  $('welcomeText').textContent = config.page.welcomeText;
+  $('loadingText').textContent = config.page.loadingText;
+  $('photoPrompt').textContent = config.page.photoPrompt;
+  $('photoInput').placeholder = config.page.photoPrompt;
+  $('errorMsg').textContent = config.page.loadFailText;
+  $('btnSave').textContent = config.ui.saveButtonText;
+  $('btnWith').textContent = config.ui.saveWithTextButtonText;
+  $('refreshBtn').textContent = config.ui.refreshButtonText;
+  $('shareTip').textContent = config.ui.shareTipText;
+  $('hint').textContent = isMobile ? config.ui.hintMobile : config.ui.hintDesktop;
+  $('photoInput').maxLength = config.photo.maxChars;
+}
+
+/* ----------------------- 4. 初始化 3D 环境 ----------------------------- */
+// 【约束7】不使用 OrbitControls，直接操作 camera.position / camera.rotation。
+// 用 yaw/pitch 两个欧拉角描述朝向，每帧通过 y.FromEuler 写入 camera.rotation。
+function init3D() {
+  // 【约束4】先取得带 preserveDrawingBuffer 的上下文（见 acquireWebGL2Context）
+  const testCtx = acquireWebGL2Context();
+  if (!testCtx) { showNoWebGL(); return false; }
+
+  camera = new SPLAT.Camera();
+  // fx/fy 在 resize() 中根据渲染尺寸动态计算（保持 FOV 恒定 60°）
+  // 传入 canvas：WebGLRenderer 复用上面已创建的上下文（preserveDrawingBuffer 生效）
+  renderer = new SPLAT.WebGLRenderer(canvas);
+  scene = new SPLAT.Scene();
+
+  // 由 defaultView 的 position/target 反解初始 yaw/pitch（look 方向 = target - position）
+  const dv = config.model.defaultView;
+  const P = dv.position, T = dv.target;
+  let fx = T.x - P.x, fy = T.y - P.y, fz = T.z - P.z;
+  const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
+  fx /= fl; fy /= fl; fz /= fl;
+  yaw = Math.atan2(fx, fz);                          // yaw=0 → +Z；yaw>0 → +X
+  pitch = Math.asin(clamp(-fy, -1, 1));              // pitch>0 看下方（fy<0 时 pitch>0）
+  pitch = clamp(pitch, -config.controls.pitchLimit, config.controls.pitchLimit);
+
+  camera.position = new SPLAT.Vector3(P.x, P.y, P.z);
+  applyCameraRotation();
+
+  // 缓存初始视角，供 R 键复位使用
+  defaultView = { x: P.x, y: P.y, z: P.z, yaw, pitch };
+
+  // 初始渲染缩放（性能兜底）
+  renderScale = computeInitialScale();
+  resize();
+  return true;
+}
+
+// 将 yaw/pitch 写入 camera.rotation（无阻尼，1:1 跟手）
+function applyCameraRotation() {
+  camera.rotation = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(pitch, yaw, 0));
+}
+
+// 重置视角到初始状态（R 键触发）
+function resetView() {
+  yaw = defaultView.yaw;
+  pitch = defaultView.pitch;
+  camera.position = new SPLAT.Vector3(defaultView.x, defaultView.y, defaultView.z);
+  applyCameraRotation();
+}
+
+// 模型自动居中：遍历 scene.objects[].data.positions（高斯点位置）计算
+// 合并包围盒与 Y 分布直方图，自动判断"地面层"高度并把相机定位到
+// 地面层上方俯视，避免从底部看模型。
+function autoFrameModel() {
+  if (!scene || !scene.objects || scene.objects.length === 0) {
+    console.warn('[autoFrame] scene.objects 为空，跳过');
+    return;
+  }
+  // 1) 遍历所有高斯点，计算合并包围盒 + 收集 Y 值用于直方图
+  let minB = null, maxB = null;
+  const ySamples = []; // 采样高斯点的 Y 值（用于直方图找地面层）
+  const SAMPLE_STRIDE = 64; // 每 64 个点采样一次（性能优化，模型动辄几十万点）
+  let totalPoints = 0, sampledPoints = 0;
+
+  for (const obj of scene.objects) {
+    const b = obj.bounds;
+    if (!b) continue;
+    if (!minB) {
+      minB = { x: b.min.x, y: b.min.y, z: b.min.z };
+      maxB = { x: b.max.x, y: b.max.y, z: b.max.z };
+    } else {
+      minB.x = Math.min(minB.x, b.min.x); minB.y = Math.min(minB.y, b.min.y); minB.z = Math.min(minB.z, b.min.z);
+      maxB.x = Math.max(maxB.x, b.max.x); maxB.y = Math.max(maxB.y, b.max.y); maxB.z = Math.max(maxB.z, b.max.z);
+    }
+    // 采样高斯点 Y 值
+    const data = obj.data;
+    if (data && data.positions && data.vertexCount) {
+      const positions = data.positions;
+      const vc = data.vertexCount;
+      totalPoints += vc;
+      for (let i = 0; i < vc; i += SAMPLE_STRIDE) {
+        ySamples.push(positions[3 * i + 1]); // Y 分量
+        sampledPoints++;
+      }
+    }
+  }
+  if (!minB) {
+    console.warn('[autoFrame] 未找到有效 bounds，跳过');
+    return;
+  }
+
+  const cx = (minB.x + maxB.x) / 2, cy = (minB.y + maxB.y) / 2, cz = (minB.z + maxB.z) / 2;
+  const sx = maxB.x - minB.x, sy = maxB.y - minB.y, sz = maxB.z - minB.z;
+  const longest = Math.max(sx, sy, sz);
+
+  // 2) 找"地面层"：用 Y 坐标 15% 百分位作为地面参考点
+  //    （高斯泼溅模型中，屋顶/墙面的点可能比地面更多，所以"最密集层"可能是屋顶。
+  //     改用百分位法：把所有 Y 排序后取 15% 处，作为最贴近地面的主表面）
+  let groundY = cy;
+  if (ySamples.length > 100) {
+    ySamples.sort((a, b) => a - b);
+    const p05 = ySamples[Math.floor(ySamples.length * 0.05)];   // 5% 分位（最低的那部分，可能是地面下噪点）
+    const p15 = ySamples[Math.floor(ySamples.length * 0.15)];  // 15% 分位（地面主体）
+    const p50 = ySamples[Math.floor(ySamples.length * 0.50)];  // 中位数
+    const p95 = ySamples[Math.floor(ySamples.length * 0.95)];  // 95% 分位（最高点附近）
+    // 取 p15 作为地面层（过滤掉底部 5% 的离群噪点）
+    groundY = p15;
+    console.log('[autoFrame] Y分布: 5%=', p05.toFixed(2), '15%=', p15.toFixed(2),
+      '50%=', p50.toFixed(2), '95%=', p95.toFixed(2),
+      '| minB.y=', minB.y.toFixed(2), 'maxB.y=', maxB.y.toFixed(2),
+      '| 选定地面层 groundY=', groundY.toFixed(2), '总点数≈', totalPoints);
+  }
+
+  // 3) 相机定位：在地面层上方俯视，确保看到模型全貌而非底部
+  //    camY = 地面层 + 一定高度（让人能俯瞰整个校园）
+  //    camZ = cz + dist（从 +Z 方向看）
+  //    pitch 自然向下俯视
+  const dist = Math.max(1.0, longest * 0.5);
+  const camX = cx;
+  const camY = groundY + sy * 0.8 + dist * 0.3; // 地面层上方
+  const camZ = cz + dist;
+  // look 方向 = 地面层中心 - camPos
+  const lookY = groundY;
+  let fx = cx - camX, fy = lookY - camY, fz = cz - camZ;
+  const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
+  fx /= fl; fy /= fl; fz /= fl;
+  yaw = Math.atan2(fx, fz);
+  pitch = Math.asin(clamp(-fy, -1, 1));
+  const limit = config.controls.pitchLimit;
+  pitch = clamp(pitch, -limit, limit);
+
+  camera.position = new SPLAT.Vector3(camX, camY, camZ);
+  applyCameraRotation();
+  // 保存包围盒信息供视角预设（1-6 键）与边界限制使用
+  _bbCenter = { cx, cy: groundY, cz, sx, sy, sz, longest, minB, maxB, groundY };
+  // 更新初始视角缓存，R 键复位到这里
+  defaultView = { x: camX, y: camY, z: camZ, yaw, pitch };
+
+  // 调试日志
+  console.log('[autoFrame] bounds min=', minB, 'max=', maxB);
+  console.log('[autoFrame] 地面层Y=', groundY.toFixed(2), '中心Y=', cy.toFixed(2),
+    '最高Y=', maxB.y.toFixed(2));
+  console.log('[autoFrame] camPos=(', camX.toFixed(2), camY.toFixed(2), camZ.toFixed(2),
+    ') yaw=', yaw.toFixed(3), 'pitch=', pitch.toFixed(3));
+  console.log('[autoFrame] 按数字键 1-6 切换视角预设(前/后/左/右/顶/底)，F=翻转俯仰，G=旋转180°');
+}
+
+// 初始渲染缩放评估：硬件并发数 / 屏幕 / 是否移动设备
+function computeInitialScale() {
+  const cfg = config.render.initialScale;
+  if (typeof cfg === 'number') return clamp(cfg, config.render.minScale, 1);
+  const cores = navigator.hardwareConcurrency || 4;
+  const pixels = window.screen.width * window.screen.height * (window.devicePixelRatio || 1);
+  let s = 1.0;
+  if (isMobile) s = cores >= 6 ? 0.75 : 0.5;
+  else s = cores >= 8 ? 1.0 : 0.75;
+  if (pixels > 2073600 * 2) s = Math.min(s, 0.75); // 超高分辨率屏再降一档
+  return clamp(s, config.render.minScale, 1);
+}
+
+/* -------------------------- 5. 模型加载（主/备）------------------------ */
+// 【约束6】主链失败/超时切换 fallbackUrl，必须重新实例 Scene，避免模型重叠。
+async function loadModelWithFallback() {
+  const primary = config.model.url;
+  const fallback = config.model.fallbackUrl;
+  try {
+    await loadModelOnce(primary, true);
+  } catch (e) {
+    console.warn('[model] 主链失败，切换备用链：', e);
+    // 清空当前场景残留：重新实例 Scene（约束2：不调用 scene.reset，直接 new）
+    scene = new SPLAT.Scene();
+    try {
+      await loadModelOnce(fallback, false);
+    } catch (e2) {
+      console.error('[model] 备用链也失败：', e2);
+      showError();
+      return false;
+    }
+  }
+  return true;
+}
+
+// 单次加载，带超时与进度回调
+function loadModelOnce(url, isPrimary) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = config.load.timeout;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error('加载超时 ' + timeout + 'ms'));
+    }, timeout);
+
+    SPLAT.Loader.LoadAsync(url, scene, (progress) => {
+      // 进度回调：实时更新进度条宽度
+      const p = Math.max(0, Math.min(1, progress || 0));
+      $('progressBar').style.width = (p * 100).toFixed(1) + '%';
+      $('progressPct').textContent = Math.floor(p * 100) + '%';
+    }).then(() => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      $('progressBar').style.width = '100%';
+      $('progressPct').textContent = '100%';
+      resolve();
+    }).catch((e) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
+}
+
+/* ----------------------------- 6. 渲染循环 ----------------------------- */
+function startRenderLoop() {
+  lastFrameTime = performance.now();
+  fpsLast = lastFrameTime;
+  fpsFrames = 0;
+  const loop = (now) => {
+    rafId = requestAnimationFrame(loop);
+    let dt = (now - lastFrameTime) / 1000;
+    if (dt > 0.1) dt = 0.1; // 防止切后台回来时跳变
+    lastFrameTime = now;
+
+    applyMovement(dt);     // 自由移动（WASD / 摇杆 / Q/E 升降）
+    applyCameraRotation(); // 将 yaw/pitch 直接写入 camera.rotation（无阻尼，跟手）
+    clampCamera();         // 【约束7】每帧强制 Y 高度
+    renderer.render(scene, camera);
+
+    // FPS 统计 & 动态降级
+    fpsFrames++;
+    if (now - fpsLast >= config.render.fpsCheckInterval) {
+      fpsAvg = (fpsFrames * 1000) / (now - fpsLast);
+      fpsFrames = 0; fpsLast = now;
+      maybeDowngrade();
+    }
+  };
+  rafId = requestAnimationFrame(loop);
+}
+
+/* --------------------------- 7. 自由移动逻辑 --------------------------- */
+// 方向基于 yaw 在水平面投影（pitch 不影响行走方向，类似 Minecraft）。
+// 同时处理 Q/E 升降（直接修改 camera.position.y）。
+function applyMovement(dt) {
+  // 水平前向 / 右向（仅由 yaw 决定）
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);   // 前向
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);  // 右向
+
+  // 桌面输入
+  let inF = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
+  let inR = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+  let speed = config.controls.moveSpeed;
+
+  // 移动端摇杆输入（速度与偏移距离成正比，有上限）
+  if (joystick.active && joystick.mag > 0.05) {
+    inF = joystick.dy;          // 上推 = 前向
+    inR = joystick.dx;
+    const m = Math.sqrt(inF * inF + inR * inR);
+    if (m > 1) { inF /= m; inR /= m; }
+    speed = config.controls.joystickMaxSpeed * Math.min(joystick.mag, 1);
+  } else {
+    const m = Math.sqrt(inF * inF + inR * inR);
+    if (m > 1) { inF /= m; inR /= m; }
+  }
+
+  let moved = false;
+  const pos = camera.position;
+
+  // 水平移动（归一化对角输入避免加速）
+  if (Math.abs(inF) > 1e-3 || Math.abs(inR) > 1e-3) {
+    const dx = (fx * inF + rx * inR) * speed * dt;
+    const dz = (fz * inF + rz * inR) * speed * dt;
+    camera.position = new SPLAT.Vector3(pos.x + dx, pos.y, pos.z + dz);
+    moved = true;
+  }
+
+  // Q/E 升降（直接修改 Y，与水平移动独立）
+  const upInput = (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
+  if (Math.abs(upInput) > 1e-3) {
+    const dy2 = upInput * config.controls.elevationSpeed * dt;
+    const p2 = camera.position;
+    camera.position = new SPLAT.Vector3(p2.x, p2.y + dy2, p2.z);
+    moved = true;
+  }
+
+  return moved;
+}
+
+/* ------------- 8. 每帧相机约束（基于包围盒自动边界）---------------- */
+// 根据模型包围盒自动设定移动边界，防止相机飞出模型太远。
+// 边界 = 包围盒 ± margin（margin = longest * 0.5）
+// Y 轴：下限=地面层（不能穿地），上限=模型顶部+margin
+function clampCamera() {
+  if (!_bbCenter) {
+    // 退化为 config 中的硬编码限制
+    const minY = config.controls.cameraMinHeight;
+    const maxY = config.controls.cameraMaxHeight;
+    const camY = camera.position.y;
+    if (camY < minY || camY > maxY) {
+      camera.position = new SPLAT.Vector3(camera.position.x, clamp(camY, minY, maxY), camera.position.z);
+    }
+    return;
+  }
+  const { minB, maxB, longest, groundY } = _bbCenter;
+  const margin = longest * 2.0; // 扩大边界，给足够的走动空间（原 0.5 太小，还没走到就被"墙"挡回）
+  const minX = minB.x - margin, maxX = maxB.x + margin;
+  const minZ = minB.z - margin, maxZ = maxB.z + margin;
+  const minY = groundY - longest * 0.1;
+  const maxY = maxB.y + margin;
+  const px = clamp(camera.position.x, minX, maxX);
+  const py = clamp(camera.position.y, minY, maxY);
+  const pz = clamp(camera.position.z, minZ, maxZ);
+  if (px !== camera.position.x || py !== camera.position.y || pz !== camera.position.z) {
+    if (!window.__boundsLoggedOnce) {
+      console.log('[clamp] 自动边界生效：X∈[', minX.toFixed(1), maxX.toFixed(1),
+        ']  Y∈[', minY.toFixed(1), maxY.toFixed(1),
+        ']  Z∈[', minZ.toFixed(1), maxZ.toFixed(1), ']',
+        '  当前pos=(', camera.position.x.toFixed(1), camera.position.y.toFixed(1), camera.position.z.toFixed(1), ')');
+      window.__boundsLoggedOnce = true;
+    }
+    camera.position = new SPLAT.Vector3(px, py, pz);
+  }
+}
+
+/* --------------------------- 9. 动态降级 ------------------------------- */
+let userAdjustedRenderScale = false; // 用户手动调整后禁用自动降级
+function maybeDowngrade() {
+  if (userAdjustedRenderScale) return; // 用户接管，不再自动降级
+  if (fpsAvg < config.render.downgradeFPS && renderScale > config.render.minScale) {
+    renderScale = Math.max(config.render.minScale, +(renderScale - config.render.scaleStep).toFixed(2));
+    console.warn('[perf] FPS=' + fpsAvg.toFixed(0) + ' 降级渲染缩放至 ' + renderScale);
+    resize();
+  }
+}
+
+/* ----------------------- 10. 尺寸 / 横竖屏自适应 ----------------------- */
+// renderScale 只改变渲染分辨率（清晰度），不改变 FOV。
+// gsplat 投影矩阵用 fx/width 计算 FOV，所以 canvas 尺寸变时必须同步缩放 fx/fy。
+const TARGET_VFOV = 60 * Math.PI / 180; // 垂直 FOV 60°（恒定）
+function resize() {
+  if (!renderer) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, config.photo.maxDPR);
+  const w = canvas.clientWidth || window.innerWidth;
+  const h = canvas.clientHeight || window.innerHeight;
+  const rw = Math.max(1, Math.floor(w * dpr * renderScale));
+  const rh = Math.max(1, Math.floor(h * dpr * renderScale));
+  renderer.setSize(rw, rh);
+  // 根据 渲染尺寸 动态计算 fx/fy，保持 FOV 恒定（renderScale 只影响清晰度）
+  if (camera) {
+    camera.data.fy = rh / (2 * Math.tan(TARGET_VFOV / 2));
+    camera.data.fx = camera.data.fy * rw / rh; // 正方形像素
+  }
+  isPortrait = window.innerHeight >= window.innerWidth;
+}
+let resizeTimer = null;
+function onResize() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resize();
+    // 切换横竖屏时保持当前相机视角不变（不做任何相机重置）
+  }, 120);
+}
+window.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', onResize);
+
+/* ----------------------- 11. 桌面键盘（WASD / Q/E / R / 1-6）---------------- */
+// 【约束】所有键盘事件 preventDefault，避免触发浏览器默认行为。
+// 1=前(-Z) 2=后(+Z) 3=左(-X) 4=右(+X) 5=顶(+Y) 6=底(-Y) 视角预设
+const KEY_CODES = new Set(['KeyW','KeyA','KeyS','KeyD','KeyQ','KeyE','KeyR','Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','KeyF','KeyG']);
+window.addEventListener('keydown', (e) => {
+  if (modalOpen) return;
+  if (e.code === 'KeyR') { e.preventDefault(); resetView(); return; }
+  // 视角预设快捷键：快速排查"从哪个方向看才是模型正面"
+  if (e.code === 'Digit1') { e.preventDefault(); setPresetView('front');  return; }
+  if (e.code === 'Digit2') { e.preventDefault(); setPresetView('back');   return; }
+  if (e.code === 'Digit3') { e.preventDefault(); setPresetView('left');   return; }
+  if (e.code === 'Digit4') { e.preventDefault(); setPresetView('right');  return; }
+  if (e.code === 'Digit5') { e.preventDefault(); setPresetView('top');    return; }
+  if (e.code === 'Digit6') { e.preventDefault(); setPresetView('bottom'); return; }
+  if (e.code === 'KeyF')   { e.preventDefault(); flipPitch(); return; }
+  if (e.code === 'KeyG')   { e.preventDefault(); flipYaw();   return; }
+  if (KEY_CODES.has(e.code)) {
+    e.preventDefault();
+    const k = e.code.toLowerCase().slice(-1);
+    keys[k] = true;
+  }
+}, { passive: false });
+window.addEventListener('keyup', (e) => {
+  if (KEY_CODES.has(e.code) && !['KeyR','Digit1','Digit2','Digit3','Digit4','Digit5','Digit6','KeyF','KeyG'].includes(e.code)) {
+    e.preventDefault();
+    const k = e.code.toLowerCase().slice(-1);
+    keys[k] = false;
+  }
+}, { passive: false });
+
+// --- 视角预设（基于 autoFrameModel 计算出的包围盒中心） ---
+let _bbCenter = null;
+function setPresetView(name) {
+  if (!_bbCenter) return;
+  const { cx, cz, longest, groundY, maxB } = _bbCenter;
+  const d = longest * 0.6;
+  let camX = cx, camY = groundY, camZ = cz;
+  switch (name) {
+    case 'front':  camZ = cz + d;                  break; // 从 +Z 看 -Z
+    case 'back':   camZ = cz - d;                  break; // 从 -Z 看 +Z
+    case 'left':   camX = cx - d;                  break; // 从 -X 看 +X
+    case 'right':  camX = cx + d;                  break; // 从 +X 看 -X
+    case 'top':    camY = maxB.y + d;              break; // 从 +Y 俯视
+    case 'bottom': camY = groundY - d;            break; // 从地面层下方仰视
+  }
+  camera.position = new SPLAT.Vector3(camX, camY, camZ);
+  const fy = groundY - camY, fx = cx - camX, fz = cz - camZ;
+  const fl = Math.max(1e-6, Math.sqrt(fx*fx + fy*fy + fz*fz));
+  yaw = Math.atan2(fx/fl, fz/fl);
+  pitch = Math.asin(clamp(-fy/fl, -1, 1));
+  pitch = clamp(pitch, -config.controls.pitchLimit, config.controls.pitchLimit);
+  console.log('[preset]', name, 'camPos=(', camX.toFixed(2), camY.toFixed(2), camZ.toFixed(2), ') yaw=', yaw.toFixed(2), 'pitch=', pitch.toFixed(2));
+}
+// 调试：翻转俯仰 / 偏航 180°，快速排查方向是否反了
+function flipPitch() { pitch = -pitch; console.log('[flip] pitch →', pitch.toFixed(2)); }
+function flipYaw()   { yaw += Math.PI;  console.log('[flip] yaw →',   yaw.toFixed(2)); }
+
+/* ----------------------- 12. 移动端虚拟摇杆 ---------------------------- */
+function setupJoystick() {
+  if (!isTouchDevice) return;
+  const base = $('joystick');
+  const knob = $('knob');
+  base.classList.add('active');
+  const RADIUS = 50; // 底座半径(px)，用于归一化与限位
+  let cx = 0, cy = 0; // 底座屏幕中心，touchstart 时计算
+
+  // 触摸点落在底座范围内即激活，自动跟随手指计算偏移
+  const update = (clientX, clientY) => {
+    let dx = clientX - cx;
+    let dy = clientY - cy;
+    const mag = Math.sqrt(dx * dx + dy * dy);
+    if (mag > RADIUS) { dx = dx / mag * RADIUS; dy = dy / mag * RADIUS; } // 限位在底座内
+    knob.style.transform = `translate(${dx}px, ${dy}px)`;
+    joystick.dx = dx / RADIUS;            // 右为正
+    joystick.dy = -dy / RADIUS;           // 上推为正（屏幕下为正 -> 反向）
+    joystick.mag = Math.min(mag / RADIUS, 1);
+  };
+  const reset = () => {
+    joystick.active = false;
+    joystick.dx = 0; joystick.dy = 0; joystick.mag = 0;
+    knob.style.transform = 'translate(0,0)'; // 松手回弹至中心
+  };
+
+  // 摇杆区域 touchmove 显式 {passive:false}【约束5】
+  base.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const rect = base.getBoundingClientRect();
+    cx = rect.left + rect.width / 2;
+    cy = rect.top + rect.height / 2;
+    joystick.active = true;
+    const t = e.touches[0];
+    update(t.clientX, t.clientY);
+  }, { passive: false });
+  base.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (!joystick.active) return;
+    const t = e.touches[0];
+    update(t.clientX, t.clientY);
+  }, { passive: false });
+  const end = (e) => { e.preventDefault(); reset(); };
+  base.addEventListener('touchend', end, { passive: false });
+  base.addEventListener('touchcancel', end, { passive: false });
+}
+
+/* --------------- 12b. 视角控制（纯鼠标拖拽 / 触摸）----------- */
+// 简化方案：去掉 Pointer Lock，纯鼠标左键拖拽旋转视角。
+//   鼠标：按住左键拖拽 → 旋转视角（1:1 跟手，无延迟）
+//   触屏：单指拖动旋转，双指上下滑动升降。
+function setupLookControls() {
+  const limit = config.controls.pitchLimit;
+  const keysHelp = $('keysHelp');
+  const joy = $('joystick');
+
+  // --------- 鼠标拖拽（始终注册，不区分设备类型）---------
+  const drag = { active: false, lastX: 0, lastY: 0 };
+  const onMouseMove = (e) => {
+    if (!drag.active) return;
+    const s = config.controls.lookSensitivity;
+    const dx = e.clientX - drag.lastX;
+    const dy = e.clientY - drag.lastY;
+    yaw += dx * s;
+    pitch += dy * s;
+    pitch = clamp(pitch, -limit, limit);
+    drag.lastX = e.clientX;
+    drag.lastY = e.clientY;
+  };
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', () => { drag.active = false; });
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (modalOpen || e.button !== 0) return;
+    drag.active = true;
+    drag.lastX = e.clientX;
+    drag.lastY = e.clientY;
+    e.preventDefault();
+  });
+
+  // --------- UI 显示：触屏显示摇杆，非触屏显示按键提示 ---------
+  if (isTouchDevice) {
+    joy.classList.add('active');
+    keysHelp.classList.remove('show');
+  } else {
+    keysHelp.classList.add('show');
+  }
+
+  // --------- 触屏监听（仅触屏设备注册，避免桌面误触）---------
+  if (isTouchDevice) {
+    const dist2 = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    const midY = (a, b) => (a.clientY + b.clientY) / 2;
+
+    canvas.addEventListener('touchstart', (e) => {
+      if (modalOpen) return;
+      e.preventDefault();
+      const tt = e.targetTouches;
+      if (tt.length === 1) {
+        look.dragging = true;
+        look.lastX = tt[0].clientX;
+        look.lastY = tt[0].clientY;
+        pinch.active = false;
+      } else if (tt.length === 2) {
+        look.dragging = false;
+        pinch.active = true;
+        pinch.lastDist = dist2(tt[0], tt[1]);
+        pinch.lastMidY = midY(tt[0], tt[1]);
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (modalOpen) return;
+      e.preventDefault();
+      const tt = e.targetTouches;
+      if (tt.length === 1 && look.dragging) {
+        const s = config.controls.touchLookSensitivity;
+        const dx = tt[0].clientX - look.lastX;
+        const dy = tt[0].clientY - look.lastY;
+        yaw += dx * s;
+        pitch += dy * s;
+        pitch = clamp(pitch, -limit, limit);
+        look.lastX = tt[0].clientX;
+        look.lastY = tt[0].clientY;
+      } else if (tt.length === 2 && pinch.active) {
+        const curMidY = midY(tt[0], tt[1]);
+        const dy = pinch.lastMidY - curMidY;
+        const speed = config.controls.elevationSpeed * 0.05;
+        const newY = clamp(
+          camera.position.y + dy * speed,
+          config.controls.cameraMinHeight,
+          config.controls.cameraMaxHeight
+        );
+        camera.position = new SPLAT.Vector3(camera.position.x, newY, camera.position.z);
+        pinch.lastMidY = curMidY;
+        pinch.lastDist = dist2(tt[0], tt[1]);
+      }
+    }, { passive: false });
+
+    const endTouch = (e) => {
+      const tt = e.targetTouches;
+      if (tt.length === 0) {
+        look.dragging = false;
+        pinch.active = false;
+      } else if (tt.length === 1) {
+        pinch.active = false;
+        look.dragging = true;
+        look.lastX = tt[0].clientX;
+        look.lastY = tt[0].clientY;
+      }
+    };
+    canvas.addEventListener('touchend', endTouch, { passive: false });
+    canvas.addEventListener('touchcancel', endTouch, { passive: false });
+  }
+}
+
+/* ----------------- 13. 全局 touchmove {passive:false} ------------------ */
+// 【约束5】全局 touchmove 必须显式声明 {passive:false}。
+// 非模态状态下阻止默认页面滚动与双指缩放；模态框打开时放行，保证输入框可用。
+function setupGlobalTouchGuard() {
+  const handler = (e) => {
+    if (modalOpen) return;             // 模态框内允许默认行为（输入/滚动）
+    e.preventDefault();                 // 阻止页面滚动与双指缩放
+  };
+  document.addEventListener('touchmove', handler, { passive: false });
+  // 阻止双击放大与多点手势
+  document.addEventListener('gesturestart', (e) => { if (!modalOpen) e.preventDefault(); }, { passive: false });
+  // 阻止右键菜单（部分长按触发）
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+/* ----------------------- 13b. 设置面板（可调渲染精度/移动速度/灵敏度）------------- */
+function setupSettingsPanel() {
+  const toggle = $('settingsToggle');
+  const panel = $('settingsPanel');
+  toggle.addEventListener('click', () => panel.classList.toggle('open'));
+
+  // 渲染精度滑块：0.5（低）~ 2.0（超采样，更清晰但更耗 GPU）
+  const rsSlider = $('renderScaleSlider');
+  const rsVal = $('renderScaleVal');
+  rsSlider.addEventListener('input', () => {
+    renderScale = parseFloat(rsSlider.value);
+    rsVal.textContent = renderScale.toFixed(1);
+    userAdjustedRenderScale = true; // 用户接管，禁用自动降级
+    resize(); // 立即应用新分辨率
+  });
+
+  // 移动速度滑块：实时修改 config.controls.moveSpeed
+  const msSlider = $('moveSpeedSlider');
+  const msVal = $('moveSpeedVal');
+  msSlider.addEventListener('input', () => {
+    config.controls.moveSpeed = parseFloat(msSlider.value);
+    msVal.textContent = config.controls.moveSpeed.toFixed(1);
+  });
+
+  // 鼠标灵敏度滑块
+  const lsSlider = $('lookSensSlider');
+  const lsVal = $('lookSensVal');
+  lsSlider.addEventListener('input', () => {
+    config.controls.lookSensitivity = parseFloat(lsSlider.value);
+    lsVal.textContent = config.controls.lookSensitivity.toFixed(3);
+  });
+}
+
+/* -------------------------- 14. 拍照与文字合成 ------------------------- */
+// 【约束4】截图依赖初始化时设定的 preserveDrawingBuffer:true，运行时不修改。
+// 先渲染一帧保证最新，再以 canvas.toDataURL 取得纯净画面（不含任何 UI 元素）。
+function captureSceneDataUrl() {
+  if (renderer && scene && camera) renderer.render(scene, camera);
+  return canvas.toDataURL('image/png');
+}
+
+// 在离屏 canvas 上合成：截图 + 水印 + 自定义文字（自动换行）
+function composePhoto(userText) {
+  // 取得纯净场景截图（同步可用，因 preserveDrawingBuffer 已开启），同时刷新最新帧
+  captureSceneDataUrl();
+  const off = document.createElement('canvas');
+  // 分辨率与当前渲染分辨率一致；DPR 上限由 config 限制，防文件过大
+  off.width = canvas.width;
+  off.height = canvas.height;
+  const ctx = off.getContext('2d');
+  // 将 3D 画布绘制到离屏画布（preserveDrawingBuffer 保证可读）
+  ctx.drawImage(canvas, 0, 0, off.width, off.height);
+  drawComposition(ctx, off.width, off.height, isPortrait, userText);
+  return off;
+}
+
+// 文字层绘制（横竖屏分别排版）
+function drawComposition(ctx, W, H, portrait, userText) {
+  const watermark = config.page.watermark;
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(0,0,0,0.55)';
+  ctx.shadowBlur = Math.max(2, Math.round(W * 0.012));
+  ctx.textBaseline = 'top';
+
+  if (portrait) {
+    // 竖屏：水印顶部居中（字号约画宽 5%），自定义文字底部居中（约 8%）
+    const wmSize = Math.round(W * config.photo.portraitWatermarkRatio);
+    const txSize = Math.round(W * config.photo.portraitTextRatio);
+    ctx.font = `600 ${wmSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(watermark, W / 2, Math.round(H * 0.04));
+    if (userText && userText.trim()) {
+      ctx.font = `500 ${txSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      drawWrappedText(ctx, userText, W / 2, H - Math.round(H * 0.12), W * config.photo.wrapWidthRatio, txSize * 1.4, 'center');
+    }
+  } else {
+    // 横屏：水印左下角（约 4%），自定义文字右下角（约 6%）
+    const wmSize = Math.round(H * config.photo.landscapeWatermarkRatio);
+    const txSize = Math.round(H * config.photo.landscapeTextRatio);
+    const pad = Math.round(W * 0.03);
+    ctx.font = `600 ${wmSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.fillText(watermark, pad, H - pad - wmSize);
+    if (userText && userText.trim()) {
+      ctx.font = `500 ${txSize}px -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif`;
+      drawWrappedText(ctx, userText, W - pad, H - pad - txSize, W * config.photo.wrapWidthRatio, txSize * 1.4, 'right');
+    }
+  }
+  ctx.restore();
+}
+
+// Canvas 手动测量换行：超过 30 字或超出画布宽度 80% 时换行
+function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, align) {
+  text = (text || '').slice(0, config.photo.maxChars);
+  ctx.textAlign = align;
+  // 按字符逐个测量（兼容中英文混排）
+  const lines = [];
+  let line = '';
+  for (const ch of text) {
+    const test = line + ch;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = ch;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  // 从底部向上绘制（右下/底部居中）
+  const totalH = lines.length * lineHeight;
+  let startY = y - totalH + lineHeight;
+  for (const ln of lines) {
+    ctx.fillText(ln, x, startY);
+    startY += lineHeight;
+  }
+}
+
+// 模态框实时预览（降采样绘制以节省性能）
+function updatePreview() {
+  const pc = $('previewCanvas');
+  const W = Math.min(360, window.innerWidth - 80);
+  const ratio = canvas.height ? canvas.height / canvas.width : 0.5625;
+  const H = Math.round(W * ratio);
+  pc.width = W; pc.height = H;
+  const ctx = pc.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, W, H);
+  drawComposition(ctx, W, H, isPortrait, $('photoInput').value);
+}
+
+/* ----------------------------- 15. 导出 / 分享 ------------------------ */
+async function exportPhoto(userText) {
+  const composed = composePhoto(userText);
+  const dataUrl = composed.toDataURL('image/png');
+  const filename = `dongming_2026_${Date.now()}.png`;
+
+  // 移动端：优先 Web Share API；微信/QQ 内置浏览器降级为长按保存
+  if (isMobile) {
+    try {
+      const blob = await (await fetch(dataUrl)).blob();
+      const file = new File([blob], filename, { type: 'image/png' });
+      if (!isWeChatOrQQ && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file] });
+        return;
+      }
+    } catch (e) {
+      console.warn('[share] 调起分享失败，降级为长按保存', e);
+    }
+    // 降级：全屏大图 + 长按保存提示
+    $('shareImg').src = dataUrl;
+    $('shareView').classList.add('show');
+  } else {
+    // 桌面端：触发浏览器下载
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+}
+
+/* --------------------------- 16. 模态框开关 --------------------------- */
+function openModal() {
+  modalOpen = true;                       // 跳过触摸阻止逻辑，保证输入框可用
+  $('modal').classList.add('open');
+  setTimeout(updatePreview, 30);
+  $('photoInput').focus({ preventScroll: true });
+}
+function closeModal() {
+  modalOpen = false;
+  $('modal').classList.remove('open');
+  $('photoInput').value = '';
+}
+
+/* ----------------------------- 17. UI 提示 ---------------------------- */
+function showHint() {
+  const hint = $('hint');
+  hint.classList.add('show');
+  setTimeout(() => hint.classList.remove('show'), config.ui.operateHintDuration);
+}
+function showNoWebGL() { $('nowebgl').classList.add('show'); }
+function showError() { $('error').classList.add('show'); }
+
+/* --------------------------- 18. 预留扩展接口 ------------------------- */
+// 允许外部动态合并配置并即时生效（如视角灵敏度、文案等）。
+window.updateConfig = function (newConfig) {
+  if (!newConfig || typeof newConfig !== 'object') return;
+  config = deepMerge(config, newConfig);
+  applyTexts();
+  resize();
+};
+function deepMerge(a, b) {
+  const out = Array.isArray(a) ? a.slice() : Object.assign({}, a);
+  for (const k in b) {
+    if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) {
+      out[k] = deepMerge(a[k] || {}, b[k]);
+    } else {
+      out[k] = b[k];
+    }
+  }
+  return out;
+}
+
+/* ------------------------------- 19. 启动 ----------------------------- */
+async function main() {
+  try {
+    config = await loadConfig();
+  } catch (e) {
+    // 配置加载失败时无法继续（约束8：所有参数读取自 config.json，禁止硬编码）
+    console.error(e);
+    showError();
+    return;
+  }
+  applyTexts();
+  setupJoystick();
+  setupGlobalTouchGuard();
+  setupPhotoUI();
+  setupSettingsPanel();
+
+  // 加载 gsplat.js 库
+  try { await loadGSplat(); }
+  catch (e) { console.error(e); showError(); return; }
+
+  if (!init3D()) return; // WebGL 不支持时已显示提示
+  setupLookControls();   // 桌面指针锁定旋转 / 移动端单指旋转 + 双指升降
+
+  // 启动渲染循环（即使模型未加载完，也先渲染空场景）
+  startRenderLoop();
+
+  // 加载模型（主链 / 备用）
+  const ok = await loadModelWithFallback();
+  if (!ok) return;
+
+  // 模型加载完成后自动居中相机，避免模型不在原点时看到底面
+  autoFrameModel();
+
+  // 淡出加载遮罩，显示操作提示
+  setTimeout(() => {
+    $('loading').classList.add('fade-out');
+    showHint();
+    // 指针锁定由用户首次点击/按键在手势中触发（浏览器安全约束要求用户激活）
+  }, 300);
+}
+
+/* --------------------------- 20. 拍照 UI 绑定 ------------------------- */
+function setupPhotoUI() {
+  $('photoBtn').addEventListener('click', openModal);
+  $('btnSave').addEventListener('click', () => { exportPhoto(null); closeModal(); });
+  $('btnWith').addEventListener('click', () => { exportPhoto($('photoInput').value); closeModal(); });
+  $('photoInput').addEventListener('input', updatePreview);
+  $('shareClose').addEventListener('click', () => $('shareView').classList.remove('show'));
+  $('refreshBtn').addEventListener('click', () => location.reload());
+  // 模态框遮罩点击关闭（点卡片不关）
+  $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
+}
+
+// 启动
+main();
+</script>
+</body>
+</html>

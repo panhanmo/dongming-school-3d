@@ -1,0 +1,59 @@
+{
+  "model": {
+    "url": "./model.splat",
+    "fallbackUrl": "./model.splat",
+    "defaultView": {
+      "position": { "x": 0, "y": 5, "z": 30 },
+      "target": { "x": 0, "y": 0, "z": 0 }
+    },
+    "zoomLimits": { "min": 1.0, "max": 200.0 }
+  },
+  "page": {
+    "title": "东明学校数字校园",
+    "welcomeText": "欢迎回家——东明学校",
+    "loadingText": "正在为你打开校门...",
+    "loadFailText": "校门暂时无法打开，请稍后重试",
+    "watermark": "东明学校 · 2026夏天",
+    "photoPrompt": "写下你想留在东明的话"
+  },
+  "ui": {
+    "operateHintDuration": 3000,
+    "primaryColor": "#ffffff",
+    "overlayOpacity": 0.15,
+    "hintMobile": "单指拖动旋转 | 摇杆移动 | 双指上下升降",
+    "hintDesktop": "鼠标拖拽旋转 | 1-6切换视角 | F翻转俯仰 | G旋转180°",
+    "saveButtonText": "直接保存",
+    "saveWithTextButtonText": "加上这句话",
+    "shareTipText": "长按图片保存到相册",
+    "refreshButtonText": "刷新重试"
+  },
+  "controls": {
+    "moveSpeed": 3.0,
+    "joystickMaxSpeed": 3.0,
+    "cameraMinHeight": -100.0,
+    "cameraMaxHeight": 300.0,
+    "lookSensitivity": 0.006,
+    "touchLookSensitivity": 0.008,
+    "elevationSpeed": 5.0,
+    "pitchLimit": 1.57
+  },
+  "render": {
+    "initialScale": 1.0,
+    "minScale": 0.75,
+    "scaleStep": 0.1,
+    "downgradeFPS": 20,
+    "fpsCheckInterval": 3000
+  },
+  "load": {
+    "timeout": 300000
+  },
+  "photo": {
+    "maxDPR": 2,
+    "portraitWatermarkRatio": 0.05,
+    "portraitTextRatio": 0.08,
+    "landscapeWatermarkRatio": 0.04,
+    "landscapeTextRatio": 0.06,
+    "maxChars": 30,
+    "wrapWidthRatio": 0.8
+  }
+}
