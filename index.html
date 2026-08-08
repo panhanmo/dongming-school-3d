@@ -807,24 +807,27 @@ function computeModelBounds() {
 }
 
 // 空气墙：将相机位置限制在模型边界内
-// 底面 = groundY + eyeHeight（防止穿地），顶面 = maxY + 最长边 × 0.5（允许高空俯瞰）
-// 水平 = 包围盒 ± margin（允许退到足够远查看全景）
-function clampCameraPosition() {
-  if (!modelBounds || !config.boundary.enabled) return;
-  const b = modelBounds;
-  const margin = b.longest * config.boundary.marginMultiplier;
-  const eyeHeight = config.boundary.eyeHeight;
-  // 顶面高度：模型顶部 + 最长边 × 1.0，留足高空俯瞰空间
-  const yMax = b.maxY + b.longest * 1.0;
+  // gsplat.js 渲染中 Y 向下，所以"上方"= 更小 Y，"下方/地面"= 更大 Y
+  // 顶面（上限）= minY - 最长边×1.0（防止飞太高）
+  // 底面（下限）= maxY（防止穿到地面以下）
+  // 水平 = 包围盒 ± margin
+  function clampCameraPosition() {
+    if (!modelBounds || !config.boundary.enabled) return;
+    const b = modelBounds;
+    const margin = b.longest * config.boundary.marginMultiplier;
+    // 上限（最高处）= minY - 最长边 × 1.0
+    const yCeiling = b.minY - b.longest * 1.0;
+    // 下限（地面）= maxY（模型底部）
+    const yFloor = b.maxY;
 
-  const pos = camera.position;
-  const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
-  const y = clamp(pos.y, b.groundY + eyeHeight, yMax);
-  const z = clamp(pos.z, b.minZ - margin, b.maxZ + margin);
+    const pos = camera.position;
+    const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
+    const y = clamp(pos.y, yCeiling, yFloor);
+    const z = clamp(pos.z, b.minZ - margin, b.maxZ + margin);
 
-  if (x !== pos.x || y !== pos.y || z !== pos.z) {
-    camera.position = new SPLAT.Vector3(x, y, z);
-  }
+    if (x !== pos.x || y !== pos.y || z !== pos.z) {
+      camera.position = new SPLAT.Vector3(x, y, z);
+    }
 }
 
 /* ----------------------- 底面网格渲染 ---------------------------- */
@@ -941,11 +944,12 @@ function autoFrameModel() {
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
 
-  // 初始位置 = 模型上方斜后方，俯瞰全景（确保在模型顶部以上，不会在下方）
+  // 初始位置 = 模型上方斜后方，俯瞰全景
+  // 注意：gsplat.js 渲染中 Y 轴向下，所以"上方"= 更小的 Y 值（minY 方向）
   const modelHeight = b.maxY - b.groundY;
   const camX = cx;
-  const camY = b.maxY + longest * 0.8; // 大幅向上：模型顶部上方 0.8×最长边
-  const camZ = cz - longest * 0.5;     // 大幅向前：靠近模型，仅 0.5×最长边距离
+  const camY = b.minY - longest * 0.8; // 向上 = minY 方向（渲染中 Y 向下）
+  const camZ = cz - longest * 0.5;     // 向前 = 靠近模型
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
   // 朝向模型中心（略微俯视）
   const tx = cx, ty = b.groundY + modelHeight * 0.3, tz = cz;
@@ -1142,7 +1146,7 @@ function applyMovement(dt) {
   // 桌面输入
   let inF = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
   let inR = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-  let inU = (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
+  let inU = (keys.e ? 1 : 0) - (keys.q ? 1 : 0); // Y轴向下：E=下降(+Y)，Q=上升(-Y)
   let speed = config.controls.moveSpeed;
 
   // 移动端摇杆输入（速度与偏移距离成正比，有上限）
@@ -1358,11 +1362,11 @@ function setupLookControls() {
       look.lastX = tt[0].clientX;
       look.lastY = tt[0].clientY;
     } else if (tt.length === 2 && pinch.active) {
-      // 双指上下滑动：升降相机 Y（无空气墙限制）
+      // 双指上下滑动：升降相机 Y（Y轴向下，上滑=减小Y=升高）
       const curMidY = midY(tt[0], tt[1]);
-      const dy = pinch.lastMidY - curMidY; // 上滑为正 → 升高
+      const dy = pinch.lastMidY - curMidY; // 上滑为正
       const speed = config.controls.elevationSpeed * 0.05;
-      const newY = camera.position.y + dy * speed;
+      const newY = camera.position.y - dy * speed; // Y向下：上滑减Y=升高
       camera.position = new SPLAT.Vector3(camera.position.x, newY, camera.position.z);
       pinch.lastMidY = curMidY;
       pinch.lastDist = dist2(tt[0], tt[1]);

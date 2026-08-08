@@ -22,7 +22,7 @@
     "primaryColor": "#ffffff",
     "overlayOpacity": 0.15,
     "hintMobile": "单指拖动旋转 | 摇杆移动 | 双指上下升降",
-    "hintDesktop": "拖动旋转 | WASD飞行 | Q/E升降 | R重置",
+    "hintDesktop": "拖动旋转 | WASD飞行 | Q上升 E下降 | R重置",
     "qualityHintText": "画质已恢复",
     "saveButtonText": "直接保存",
     "saveWithTextButtonText": "加上这句话",
