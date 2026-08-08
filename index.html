@@ -773,16 +773,20 @@ function computeModelBounds() {
 }
 
 // 空气墙：将相机位置限制在模型边界内
-// 底面 = groundY + eyeHeight，顶面 = maxY + margin，水平 = 包围盒 ± margin
+// 底面 = groundY + eyeHeight（防止穿地），顶面 = maxY + 合理余量（允许俯瞰但不飞太高）
+// 水平 = 包围盒 ± margin（允许退到足够远查看全景）
 function clampCameraPosition() {
   if (!modelBounds || !config.boundary.enabled) return;
   const b = modelBounds;
   const margin = b.longest * config.boundary.marginMultiplier;
   const eyeHeight = config.boundary.eyeHeight;
+  const modelHeight = b.maxY - b.groundY;
+  // 顶面高度：模型顶部 + max(模型高度 × 0.3, 最长边 × 0.1)，允许俯瞰全景但不会飞太高
+  const yMax = b.maxY + Math.max(modelHeight * 0.3, b.longest * 0.1);
 
   const pos = camera.position;
   const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
-  const y = clamp(pos.y, b.groundY + eyeHeight, b.maxY + margin);
+  const y = clamp(pos.y, b.groundY + eyeHeight, yMax);
   const z = clamp(pos.z, b.minZ - margin, b.maxZ + margin);
 
   if (x !== pos.x || y !== pos.y || z !== pos.z) {
@@ -904,11 +908,13 @@ function autoFrameModel() {
   const cy = (b.minY + b.maxY) / 2;
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
+  const modelHeight = b.maxY - b.groundY;
+
   // 相机距离 = 最长边 × 1.8（保证看到整体）
   const dist = longest * 1.8;
-  // 相机位于模型中心前方（+Z 方向），高度 = 地面 + 眼高（平视视角）
+  // 相机高度 = 地面 + max(模型高度 × 0.6, 眼高 × 5)，高于模型中心俯瞰校园全景
   const camX = cx;
-  const camY = b.groundY + config.boundary.eyeHeight;
+  const camY = b.groundY + Math.max(modelHeight * 0.6, config.boundary.eyeHeight * 5);
   const camZ = cz + dist;
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
   // 朝向模型中心
@@ -928,7 +934,7 @@ function autoFrameModel() {
   const speedScale = Math.max(1, longest / 50);
   config.controls.moveSpeed = clamp(config.controls.moveSpeed * speedScale, config.controls.moveSpeedMin, config.controls.moveSpeedMax);
   config.controls.elevationSpeed = Math.max(config.controls.elevationSpeed, 5.0 * speedScale);
-  console.log('[autoFrame] center=(' + cx + ',' + cy + ',' + cz + ') size=(' + (b.maxX-b.minX) + ',' + (b.maxY-b.minY) + ',' + (b.maxZ-b.minZ) + ') groundY=' + b.groundY.toFixed(2) + ' cam=(' + camX + ',' + camY + ',' + camZ + ') moveSpeed=' + config.controls.moveSpeed.toFixed(1));
+  console.log('[autoFrame] center=(' + cx + ',' + cy + ',' + cz + ') size=(' + (b.maxX-b.minX) + ',' + (b.maxY-b.minY) + ',' + (b.maxZ-b.minZ) + ') groundY=' + b.groundY.toFixed(2) + ' modelHeight=' + modelHeight.toFixed(1) + ' cam=(' + camX + ',' + camY + ',' + camZ + ') moveSpeed=' + config.controls.moveSpeed.toFixed(1));
 }
 
 // 初始渲染缩放评估：硬件并发数 / 屏幕 / 是否移动设备
