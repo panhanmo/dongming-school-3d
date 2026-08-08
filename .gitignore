@@ -1,0 +1,14 @@
+# 模型文件（从 GitHub Releases 加载，不纳入仓库）
+*.splat
+*.ply
+
+# 编译产物
+*.exe
+
+# 系统文件
+Thumbs.db
+.DS_Store
+
+# 临时文件
+*.tmp
+*.bak

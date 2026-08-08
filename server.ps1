@@ -1,5 +1,5 @@
 # 简易 HTTP 服务器（HttpListener + 流式传输大文件）
-$port = 8080
+$port = 7890
 $root = $PSScriptRoot
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add("http://localhost:$port/")
