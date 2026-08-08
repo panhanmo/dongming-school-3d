@@ -913,15 +913,18 @@ function autoFrameModel() {
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
 
-  // 初始位置 = 点云中心 XZ，Y = 模型高度 40%（确保在模型内部，不会飞到模型上方）
+  // 初始位置 = 模型前方，高度为模型中点，看向模型中心（外部视角，能看到全景）
   const modelHeight = b.maxY - b.groundY;
   const camX = cx;
-  const camY = b.groundY + Math.max(modelHeight * 0.4, config.boundary.eyeHeight);
-  const camZ = cz;
+  const camY = b.groundY + Math.max(modelHeight * 0.5, config.boundary.eyeHeight);
+  const camZ = cz + longest * 1.2;
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
-  // 水平视角，朝 +Z 方向看
-  yaw = 0;
-  pitch = 0;
+  // 朝向模型中心
+  const tx = cx, ty = b.groundY + modelHeight * 0.3, tz = cz;
+  const fx = tx - camX, fy = ty - camY, fz = tz - camZ;
+  const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
+  yaw = Math.atan2(fx / fl, fz / fl);
+  pitch = -Math.asin(clamp(fy / fl, -1, 1));
   smoothYaw = yaw;
   smoothPitch = pitch;
   applyCameraRotation();
