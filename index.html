@@ -712,16 +712,22 @@ function fixModelOrientation() {
 }
 
 // 根据点云计算模型边界与地面高度
-// 直接从旋转后的点云数据计算（gsplat.js 在设置 obj.rotation 时已修改 positions）
-// 地面高度采用 Y 坐标 15% 百分位（避免屋顶/墙壁/噪点拉低 groundY）
+// gsplat.js 的 rotation 是延迟执行的，positions 在 render() 时才旋转
+// 因此这里读取原始 positions 并手动应用旋转变换：
+//   zToY: (x,y,z) → (x, z, -y)   绕 X 轴 -90°
+//   xToY: (x,y,z) → (-y, x, z)   绕 Z 轴 +90°
+//   null: (x,y,z) → (x, y, z)    无旋转
+// 地面高度采用旋转后 Y 坐标 15% 百分位
 function computeModelBounds() {
   if (!scene || !scene.objects || scene.objects.length === 0) return null;
 
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   let totalPoints = 0;
+  const rotZ = modelRotationType === 'zToY';
+  const rotX = modelRotationType === 'xToY';
 
-  // 直接从点云数据计算包围盒（数据已被 gsplat.js 旋转，Y 即为高度轴）
+  // 遍历原始点云，手动旋转后计算包围盒
   for (const obj of scene.objects) {
     if (!obj.data || !obj.data.positions) continue;
     const pos = obj.data.positions;
@@ -729,15 +735,19 @@ function computeModelBounds() {
     totalPoints += vc;
     const step = Math.max(1, Math.ceil(vc / 100000));
     for (let i = 0; i < vc; i += step) {
-      const x = pos[3 * i], y = pos[3 * i + 1], z = pos[3 * i + 2];
-      if (x < minX) minX = x; if (x > maxX) maxX = x;
-      if (y < minY) minY = y; if (y > maxY) maxY = y;
-      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      const px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
+      // 手动应用旋转
+      const rx = rotX ? -py : px;
+      const ry = rotZ ? pz : (rotX ? px : py);
+      const rz = rotZ ? -py : pz;
+      if (rx < minX) minX = rx; if (rx > maxX) maxX = rx;
+      if (ry < minY) minY = ry; if (ry > maxY) maxY = ry;
+      if (rz < minZ) minZ = rz; if (rz > maxZ) maxZ = rz;
     }
   }
   if (minX === Infinity || totalPoints === 0) return null;
 
-  // 采样 Y 坐标用于地面检测（数据已旋转，Y 直接是高度轴）
+  // 采样旋转后 Y 坐标用于地面检测
   const step = Math.max(1, Math.ceil(totalPoints / 500000));
   const ySamples = new Float32Array(Math.ceil(totalPoints / step));
   let si = 0;
@@ -746,7 +756,10 @@ function computeModelBounds() {
     const pos = obj.data.positions;
     const vc = obj.data.vertexCount;
     for (let i = 0; i < vc; i += step) {
-      ySamples[si++] = pos[3 * i + 1];
+      const py = pos[3 * i + 1], pz = pos[3 * i + 2], px = pos[3 * i];
+      // 旋转后的 Y
+      const ry = rotZ ? pz : (rotX ? px : py);
+      ySamples[si++] = ry;
     }
   }
   const yArr = ySamples.subarray(0, si);
@@ -759,7 +772,7 @@ function computeModelBounds() {
 
   const gridSpacing = longest / 10;
 
-  console.log(`[computeBounds] size=(${dx.toFixed(1)},${dy.toFixed(1)},${dz.toFixed(1)}) groundY=${groundY.toFixed(2)} minY=${minY.toFixed(2)} maxY=${maxY.toFixed(2)} totalPoints=${totalPoints}`);
+  console.log(`[computeBounds] rot=${modelRotationType} size=(${dx.toFixed(1)},${dy.toFixed(1)},${dz.toFixed(1)}) groundY=${groundY.toFixed(2)} minY=${minY.toFixed(2)} maxY=${maxY.toFixed(2)} totalPoints=${totalPoints}`);
 
   return { minX, maxX, minY, maxY, minZ, maxZ, groundY, longest, gridSpacing, totalPoints };
 }
@@ -892,8 +905,6 @@ function drawGrid() {
 // 自动取景：初始位置设为点云中心，地面眼高，水平视角
 function autoFrameModel() {
   fixModelOrientation();
-  // 强制渲染一帧，让 gsplat.js 将 obj.rotation 应用到 obj.data.positions（旋转是延迟执行的）
-  if (renderer && scene && camera) renderer.render(scene, camera);
   modelBounds = computeModelBounds();
   if (!modelBounds) return;
 
