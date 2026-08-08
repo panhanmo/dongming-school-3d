@@ -59,7 +59,7 @@
   },
   "boundary": {
     "enabled": true,
-    "groundPercentile": 0.15,
+    "groundPercentile": 0.85,
     "eyeHeight": 1.7,
     "marginMultiplier": 4.0,
     "grid": true,

@@ -809,16 +809,17 @@ function computeModelBounds() {
 // 空气墙：将相机位置限制在模型边界内
   // gsplat.js 渲染中 Y 向下，所以"上方"= 更小 Y，"下方/地面"= 更大 Y
   // 顶面（上限）= minY - 最长边×1.0（防止飞太高）
-  // 底面（下限）= maxY（防止穿到地面以下）
+  // 底面（下限）= groundY - eyeHeight（地面减眼高，防止穿地）
   // 水平 = 包围盒 ± margin
   function clampCameraPosition() {
     if (!modelBounds || !config.boundary.enabled) return;
     const b = modelBounds;
     const margin = b.longest * config.boundary.marginMultiplier;
+    const eyeHeight = config.boundary.eyeHeight;
     // 上限（最高处）= minY - 最长边 × 1.0
     const yCeiling = b.minY - b.longest * 1.0;
-    // 下限（地面）= maxY（模型底部）
-    const yFloor = b.maxY;
+    // 下限（地面+眼高）= groundY - eyeHeight（Y向下，眼高在地面之上=更小Y）
+    const yFloor = b.groundY - eyeHeight;
 
     const pos = camera.position;
     const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
@@ -828,7 +829,7 @@ function computeModelBounds() {
     if (x !== pos.x || y !== pos.y || z !== pos.z) {
       camera.position = new SPLAT.Vector3(x, y, z);
     }
-}
+  }
 
 /* ----------------------- 底面网格渲染 ---------------------------- */
 let gridCanvas = null, gridCtx = null;
@@ -945,14 +946,14 @@ function autoFrameModel() {
   const longest = b.longest;
 
   // 初始位置 = 模型上方斜后方，俯瞰全景
-  // 注意：gsplat.js 渲染中 Y 轴向下，所以"上方"= 更小的 Y 值（minY 方向）
-  const modelHeight = b.maxY - b.groundY;
+  // gsplat.js 渲染中 Y 轴向下，所以"上方"= 更小的 Y 值（minY 方向）
+  const modelHeight = b.maxY - b.minY; // 完整模型高度
   const camX = cx;
   const camY = b.minY - longest * 0.8; // 向上 = minY 方向（渲染中 Y 向下）
   const camZ = cz - longest * 0.5;     // 向前 = 靠近模型
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
-  // 朝向模型中心（略微俯视）
-  const tx = cx, ty = b.groundY + modelHeight * 0.3, tz = cz;
+  // 朝向模型中心（Y向下，目标在地面以上 = 比地面更小的Y）
+  const tx = cx, ty = b.groundY - modelHeight * 0.3, tz = cz;
   const fx = tx - camX, fy = ty - camY, fz = tz - camZ;
   const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
   yaw = Math.atan2(fx / fl, fz / fl);
