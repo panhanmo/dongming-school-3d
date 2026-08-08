@@ -691,8 +691,10 @@ function fixModelOrientation() {
   // Y 应为最短轴（建筑高度通常小于长宽）；仅当 Y 显著大于最短轴时才旋转
   const minRange = Math.min(dx, dy, dz);
   if (dy <= minRange * 1.3) {
-    // Y 已是最短轴，检查是否上下颠倒
-    // 地面（地板）的点密度应高于屋顶，如果顶部点密度高于底部，说明模型倒了
+    // Y 已是最短轴
+    // gsplat.js 投影矩阵 M[1][1]=-2fy/h，Y 轴在渲染中向下翻转
+    // 大多数模型数据 Y 向上（地面在低 Y，高密度），渲染后地面会出现在屏幕顶部
+    // 需要翻转 180° 补偿渲染器的 Y 翻转，使地面（高密度）出现在屏幕底部
     const yRange = maxY - minY;
     const bottomThreshold = minY + yRange * 0.3;
     const topThreshold = minY + yRange * 0.7;
@@ -710,15 +712,15 @@ function fixModelOrientation() {
     }
     console.log(`[fixOrientation] density: bottom=${bottomCount} top=${topCount}`);
 
-    if (topCount > bottomCount * 1.3) {
-      // 顶部点密度高于底部，模型上下颠倒，绕 X 轴翻转 180°: (x,y,z)→(x,-y,-z)
+    if (bottomCount > topCount * 1.3) {
+      // 底部（低Y）密度高 = 数据 Y 向上 = 需要 flip 补偿渲染器 Y 翻转
       modelRotationType = 'flipY';
       const q = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(Math.PI, 0, 0));
       for (const obj of scene.objects) obj.rotation = q;
-      console.log('[fixOrientation] 检测到模型上下颠倒，绕 X 轴翻转 180°');
+      console.log('[fixOrientation] Y向上数据，翻转180°补偿渲染器Y翻转');
     } else {
       modelRotationType = null;
-      console.log('[fixOrientation] Y 已是最短轴，方向正确，无需旋转');
+      console.log('[fixOrientation] Y向下数据，无需翻转');
     }
     return;
   }
