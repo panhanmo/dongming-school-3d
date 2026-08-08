@@ -549,10 +549,10 @@ const isMobile = detectMobile();
 // 检测 WebGL2 可用性（同时预创建带 preserveDrawingBuffer 的上下文）
 function acquireWebGL2Context() {
   // 【约束4】preserveDrawingBuffer 只能在创建 WebGLRenderer 时设定一次，运行时不修改。
-  // gsplat 的 WebGLRenderer 内部以 {antialias:false} 调用 getContext；为使截图可用，
-  // 此处预先以 {antialias:false, preserveDrawingBuffer:true} 取得上下文，
+  // gsplat 的 WebGLRenderer 内部以 {antialias:false} 调用 getContext；为使截图可用且提升画质，
+  // 此处预先以 {antialias:true, preserveDrawingBuffer:true} 取得上下文，
   // 后续 WebGLRenderer 再次 getContext 将返回同一上下文（属性以首次创建为准）。
-  const ctx = canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true });
+  const ctx = canvas.getContext('webgl2', { antialias: true, preserveDrawingBuffer: true, alpha: false, desynchronized: true });
   return ctx;
 }
 

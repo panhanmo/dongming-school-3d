@@ -48,7 +48,7 @@
     "scaleStep": 0.1,
     "downgradeFPS": 25,
     "fpsCheckInterval": 3000,
-    "motionScale": 2.0,
+    "motionScale": 1.0,
     "userScaleMin": 1.5,
     "userScaleMax": 3.0,
     "userScaleStep": 0.05,
