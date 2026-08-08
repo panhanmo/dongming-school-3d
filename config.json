@@ -52,14 +52,14 @@
     "userScaleMin": 1.5,
     "userScaleMax": 3.0,
     "userScaleStep": 0.05,
-    "userScaleDefault": 2.5
+    "userScaleDefault": 3.0
   },
   "load": {
     "timeout": 300000
   },
   "boundary": {
     "enabled": true,
-    "groundPercentile": 0.85,
+    "groundPercentile": 0.90,
     "eyeHeight": 1.7,
     "marginMultiplier": 4.0,
     "grid": true,
