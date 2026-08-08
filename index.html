@@ -665,19 +665,24 @@ function resetView() {
 }
 
 // 自动检测并修正模型方向（确保 Y 轴朝上）
-// 通过比较三轴范围，将最短的轴（通常是高度轴）旋转到 Y
+// 通过采样点云数据比较三轴范围，将最短的轴（通常是高度轴）旋转到 Y
 function fixModelOrientation() {
   if (!scene || !scene.objects || scene.objects.length === 0) return;
 
+  // 直接从点云数据采样计算原始包围盒（obj.bounds 可能不准确）
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
   for (const obj of scene.objects) {
-    const b = obj.bounds;
-    if (b && b.min && b.max) {
-      minX = Math.min(minX, b.min.x); maxX = Math.max(maxX, b.max.x);
-      minY = Math.min(minY, b.min.y); maxY = Math.max(maxY, b.max.y);
-      minZ = Math.min(minZ, b.min.z); maxZ = Math.max(maxZ, b.max.z);
+    if (!obj.data || !obj.data.positions) continue;
+    const pos = obj.data.positions;
+    const vc = obj.data.vertexCount;
+    const step = Math.max(1, Math.ceil(vc / 100000));
+    for (let i = 0; i < vc; i += step) {
+      const x = pos[3 * i], y = pos[3 * i + 1], z = pos[3 * i + 2];
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
     }
   }
   const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
@@ -706,68 +711,55 @@ function fixModelOrientation() {
   }
 }
 
-// 根据点云计算模型边界与地面高度（考虑模型旋转后的坐标变换）
+// 根据点云计算模型边界与地面高度
+// 直接从旋转后的点云数据计算（gsplat.js 在设置 obj.rotation 时已修改 positions）
 // 地面高度采用 Y 坐标 15% 百分位（避免屋顶/墙壁/噪点拉低 groundY）
 function computeModelBounds() {
   if (!scene || !scene.objects || scene.objects.length === 0) return null;
 
-  // 原始坐标包围盒（旋转前的 bounds）
-  let rMinX = Infinity, rMinY = Infinity, rMinZ = Infinity;
-  let rMaxX = -Infinity, rMaxY = -Infinity, rMaxZ = -Infinity;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
   let totalPoints = 0;
 
+  // 直接从点云数据计算包围盒（数据已被 gsplat.js 旋转，Y 即为高度轴）
   for (const obj of scene.objects) {
-    const b = obj.bounds;
-    if (b && b.min && b.max) {
-      rMinX = Math.min(rMinX, b.min.x); rMaxX = Math.max(rMaxX, b.max.x);
-      rMinY = Math.min(rMinY, b.min.y); rMaxY = Math.max(rMaxY, b.max.y);
-      rMinZ = Math.min(rMinZ, b.min.z); rMaxZ = Math.max(rMaxZ, b.max.z);
+    if (!obj.data || !obj.data.positions) continue;
+    const pos = obj.data.positions;
+    const vc = obj.data.vertexCount;
+    totalPoints += vc;
+    const step = Math.max(1, Math.ceil(vc / 100000));
+    for (let i = 0; i < vc; i += step) {
+      const x = pos[3 * i], y = pos[3 * i + 1], z = pos[3 * i + 2];
+      if (x < minX) minX = x; if (x > maxX) maxX = x;
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+      if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
     }
-    if (obj.data && obj.data.positions) totalPoints += obj.data.vertexCount;
   }
-  if (rMinX === Infinity || totalPoints === 0) return null;
+  if (minX === Infinity || totalPoints === 0) return null;
 
-  // 采样"高度轴"坐标用于地面检测
-  // 旋转后 Y 对应的原始轴：zToY→Z, xToY→X, null→Y
+  // 采样 Y 坐标用于地面检测（数据已旋转，Y 直接是高度轴）
   const step = Math.max(1, Math.ceil(totalPoints / 500000));
   const ySamples = new Float32Array(Math.ceil(totalPoints / step));
   let si = 0;
   for (const obj of scene.objects) {
+    if (!obj.data || !obj.data.positions) continue;
     const pos = obj.data.positions;
     const vc = obj.data.vertexCount;
     for (let i = 0; i < vc; i += step) {
-      if (modelRotationType === 'zToY')      ySamples[si++] = pos[3 * i + 2]; // old Z → new Y
-      else if (modelRotationType === 'xToY') ySamples[si++] = pos[3 * i];     // old X → new Y
-      else                                    ySamples[si++] = pos[3 * i + 1]; // Y (no rotation)
+      ySamples[si++] = pos[3 * i + 1];
     }
   }
   const yArr = ySamples.subarray(0, si);
   yArr.sort();
   const groundY = yArr[Math.floor(yArr.length * config.boundary.groundPercentile)];
 
-  // 计算旋转后的包围盒
-  // zToY: (x,y,z) → (x, z, -y)
-  // xToY: (x,y,z) → (-y, x, z)
-  let minX, maxX, minY, maxY, minZ, maxZ;
-  if (modelRotationType === 'zToY') {
-    minX = rMinX;  maxX = rMaxX;
-    minY = rMinZ;  maxY = rMaxZ;
-    minZ = -rMaxY; maxZ = -rMinY;
-  } else if (modelRotationType === 'xToY') {
-    minX = -rMaxY; maxX = -rMinY;
-    minY = rMinX;  maxY = rMaxX;
-    minZ = rMinZ;  maxZ = rMaxZ;
-  } else {
-    minX = rMinX; maxX = rMaxX;
-    minY = rMinY; maxY = rMaxY;
-    minZ = rMinZ; maxZ = rMaxZ;
-  }
-
   const dx = maxX - minX, dy = maxY - minY, dz = maxZ - minZ;
   const longest = Math.max(dx, dy, dz);
   if (longest <= 0) return null;
 
   const gridSpacing = longest / 10;
+
+  console.log(`[computeBounds] size=(${dx.toFixed(1)},${dy.toFixed(1)},${dz.toFixed(1)}) groundY=${groundY.toFixed(2)} minY=${minY.toFixed(2)} maxY=${maxY.toFixed(2)} totalPoints=${totalPoints}`);
 
   return { minX, maxX, minY, maxY, minZ, maxZ, groundY, longest, gridSpacing, totalPoints };
 }
@@ -897,7 +889,7 @@ function drawGrid() {
   }
 }
 
-// 自动取景：根据点云边界与地面高度计算相机初始位置，使模型居中可见
+// 自动取景：初始位置设为点云中心，地面眼高，水平视角
 function autoFrameModel() {
   fixModelOrientation();
   modelBounds = computeModelBounds();
@@ -905,36 +897,28 @@ function autoFrameModel() {
 
   const b = modelBounds;
   const cx = (b.minX + b.maxX) / 2;
-  const cy = (b.minY + b.maxY) / 2;
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
-  const modelHeight = b.maxY - b.groundY;
 
-  // 相机距离 = 最长边 × 1.8（保证看到整体）
-  const dist = longest * 1.8;
-  // 相机高度 = 地面 + max(模型高度 × 0.6, 眼高 × 5)，高于模型中心俯瞰校园全景
+  // 初始位置 = 点云中心 XZ，Y = 地面 + 眼高（站在校园中央）
   const camX = cx;
-  const camY = b.groundY + Math.max(modelHeight * 0.6, config.boundary.eyeHeight * 5);
-  const camZ = cz + dist;
+  const camY = b.groundY + config.boundary.eyeHeight;
+  const camZ = cz;
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
-  // 朝向模型中心
-  const fx = cx - camX, fy = cy - camY, fz = cz - camZ;
-  const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
-  yaw = Math.atan2(fx / fl, fz / fl);
-  pitch = -Math.asin(clamp(fy / fl, -1, 1));
-  // 同步平滑值（自动取景时直接对齐）
+  // 水平视角，朝 +Z 方向看
+  yaw = 0;
+  pitch = 0;
   smoothYaw = yaw;
   smoothPitch = pitch;
   applyCameraRotation();
   // 更新默认视角缓存（R 键复位到此位置）
   defaultView = { x: camX, y: camY, z: camZ, yaw, pitch };
-  // 重置速度
   velX = velY = velZ = 0;
-  // 根据模型尺寸自适应移动速度（大模型需要更快的移动速度），限制在滑块范围内
+  // 根据模型尺寸自适应移动速度
   const speedScale = Math.max(1, longest / 50);
   config.controls.moveSpeed = clamp(config.controls.moveSpeed * speedScale, config.controls.moveSpeedMin, config.controls.moveSpeedMax);
   config.controls.elevationSpeed = Math.max(config.controls.elevationSpeed, 5.0 * speedScale);
-  console.log('[autoFrame] center=(' + cx + ',' + cy + ',' + cz + ') size=(' + (b.maxX-b.minX) + ',' + (b.maxY-b.minY) + ',' + (b.maxZ-b.minZ) + ') groundY=' + b.groundY.toFixed(2) + ' modelHeight=' + modelHeight.toFixed(1) + ' cam=(' + camX + ',' + camY + ',' + camZ + ') moveSpeed=' + config.controls.moveSpeed.toFixed(1));
+  console.log('[autoFrame] center=(' + cx + ',' + cz + ') groundY=' + b.groundY.toFixed(2) + ' cam=(' + camX + ',' + camY + ',' + camZ + ') moveSpeed=' + config.controls.moveSpeed.toFixed(1));
 }
 
 // 初始渲染缩放评估：硬件并发数 / 屏幕 / 是否移动设备
