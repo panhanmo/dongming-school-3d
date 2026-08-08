@@ -892,6 +892,8 @@ function drawGrid() {
 // 自动取景：初始位置设为点云中心，地面眼高，水平视角
 function autoFrameModel() {
   fixModelOrientation();
+  // 强制渲染一帧，让 gsplat.js 将 obj.rotation 应用到 obj.data.positions（旋转是延迟执行的）
+  if (renderer && scene && camera) renderer.render(scene, camera);
   modelBounds = computeModelBounds();
   if (!modelBounds) return;
 
@@ -900,9 +902,10 @@ function autoFrameModel() {
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
 
-  // 初始位置 = 点云中心 XZ，Y = 地面 + 眼高（站在校园中央）
+  // 初始位置 = 点云中心 XZ，Y = 模型高度中点（俯瞰校园）
+  const modelHeight = b.maxY - b.groundY;
   const camX = cx;
-  const camY = b.groundY + config.boundary.eyeHeight;
+  const camY = b.groundY + Math.max(modelHeight * 0.5, config.boundary.eyeHeight * 5);
   const camZ = cz;
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
   // 水平视角，朝 +Z 方向看
