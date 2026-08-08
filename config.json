@@ -61,7 +61,7 @@
     "enabled": true,
     "groundPercentile": 0.15,
     "eyeHeight": 1.7,
-    "marginMultiplier": 2.0,
+    "marginMultiplier": 4.0,
     "grid": true,
     "gridOpacity": 0.4,
     "gridColor": [120, 180, 255]

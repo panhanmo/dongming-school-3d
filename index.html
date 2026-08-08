@@ -814,8 +814,8 @@ function clampCameraPosition() {
   const b = modelBounds;
   const margin = b.longest * config.boundary.marginMultiplier;
   const eyeHeight = config.boundary.eyeHeight;
-  // 顶面高度：模型顶部 + 最长边 × 0.5，留足俯瞰空间
-  const yMax = b.maxY + b.longest * 0.5;
+  // 顶面高度：模型顶部 + 最长边 × 1.0，留足高空俯瞰空间
+  const yMax = b.maxY + b.longest * 1.0;
 
   const pos = camera.position;
   const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
@@ -944,8 +944,8 @@ function autoFrameModel() {
   // 初始位置 = 模型上方斜后方，俯瞰全景（确保在模型顶部以上，不会在下方）
   const modelHeight = b.maxY - b.groundY;
   const camX = cx;
-  const camY = b.maxY + longest * 0.3; // 模型顶部上方，确保俯瞰
-  const camZ = cz - longest * 1.5;
+  const camY = b.maxY + longest * 0.8; // 大幅提高：模型顶部上方 0.8×最长边
+  const camZ = cz - longest * 3.0;     // 大幅前移：远离模型 3.0×最长边
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
   // 朝向模型中心（略微俯视）
   const tx = cx, ty = b.groundY + modelHeight * 0.3, tz = cz;
