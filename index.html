@@ -691,8 +691,35 @@ function fixModelOrientation() {
   // Y 应为最短轴（建筑高度通常小于长宽）；仅当 Y 显著大于最短轴时才旋转
   const minRange = Math.min(dx, dy, dz);
   if (dy <= minRange * 1.3) {
-    modelRotationType = null;
-    console.log('[fixOrientation] Y 已是最短轴，无需旋转');
+    // Y 已是最短轴，检查是否上下颠倒
+    // 地面（地板）的点密度应高于屋顶，如果顶部点密度高于底部，说明模型倒了
+    const yRange = maxY - minY;
+    const bottomThreshold = minY + yRange * 0.3;
+    const topThreshold = minY + yRange * 0.7;
+    let bottomCount = 0, topCount = 0;
+    for (const obj of scene.objects) {
+      if (!obj.data || !obj.data.positions) continue;
+      const pos = obj.data.positions;
+      const vc = obj.data.vertexCount;
+      const step = Math.max(1, Math.ceil(vc / 100000));
+      for (let i = 0; i < vc; i += step) {
+        const y = pos[3 * i + 1];
+        if (y < bottomThreshold) bottomCount++;
+        else if (y > topThreshold) topCount++;
+      }
+    }
+    console.log(`[fixOrientation] density: bottom=${bottomCount} top=${topCount}`);
+
+    if (topCount > bottomCount * 1.3) {
+      // 顶部点密度高于底部，模型上下颠倒，绕 X 轴翻转 180°: (x,y,z)→(x,-y,-z)
+      modelRotationType = 'flipY';
+      const q = SPLAT.Quaternion.FromEuler(new SPLAT.Vector3(Math.PI, 0, 0));
+      for (const obj of scene.objects) obj.rotation = q;
+      console.log('[fixOrientation] 检测到模型上下颠倒，绕 X 轴翻转 180°');
+    } else {
+      modelRotationType = null;
+      console.log('[fixOrientation] Y 已是最短轴，方向正确，无需旋转');
+    }
     return;
   }
 
@@ -714,9 +741,10 @@ function fixModelOrientation() {
 // 根据点云计算模型边界与地面高度
 // gsplat.js 的 rotation 是延迟执行的，positions 在 render() 时才旋转
 // 因此这里读取原始 positions 并手动应用旋转变换：
-//   zToY: (x,y,z) → (x, z, -y)   绕 X 轴 -90°
-//   xToY: (x,y,z) → (-y, x, z)   绕 Z 轴 +90°
-//   null: (x,y,z) → (x, y, z)    无旋转
+//   zToY:  (x,y,z) → (x, z, -y)   绕 X 轴 -90°
+//   xToY:  (x,y,z) → (-y, x, z)   绕 Z 轴 +90°
+//   flipY: (x,y,z) → (x, -y, -z)  绕 X 轴 180°（上下翻转）
+//   null:  (x,y,z) → (x, y, z)    无旋转
 // 地面高度采用旋转后 Y 坐标 15% 百分位
 function computeModelBounds() {
   if (!scene || !scene.objects || scene.objects.length === 0) return null;
@@ -726,6 +754,7 @@ function computeModelBounds() {
   let totalPoints = 0;
   const rotZ = modelRotationType === 'zToY';
   const rotX = modelRotationType === 'xToY';
+  const flipY = modelRotationType === 'flipY';
 
   // 遍历原始点云，手动旋转后计算包围盒
   for (const obj of scene.objects) {
@@ -738,8 +767,8 @@ function computeModelBounds() {
       const px = pos[3 * i], py = pos[3 * i + 1], pz = pos[3 * i + 2];
       // 手动应用旋转
       const rx = rotX ? -py : px;
-      const ry = rotZ ? pz : (rotX ? px : py);
-      const rz = rotZ ? -py : pz;
+      const ry = flipY ? -py : (rotZ ? pz : (rotX ? px : py));
+      const rz = flipY ? -pz : (rotZ ? -py : pz);
       if (rx < minX) minX = rx; if (rx > maxX) maxX = rx;
       if (ry < minY) minY = ry; if (ry > maxY) maxY = ry;
       if (rz < minZ) minZ = rz; if (rz > maxZ) maxZ = rz;
@@ -758,7 +787,7 @@ function computeModelBounds() {
     for (let i = 0; i < vc; i += step) {
       const py = pos[3 * i + 1], pz = pos[3 * i + 2], px = pos[3 * i];
       // 旋转后的 Y
-      const ry = rotZ ? pz : (rotX ? px : py);
+      const ry = flipY ? -py : (rotZ ? pz : (rotX ? px : py));
       ySamples[si++] = ry;
     }
   }
