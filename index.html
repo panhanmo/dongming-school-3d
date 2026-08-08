@@ -778,16 +778,15 @@ function computeModelBounds() {
 }
 
 // 空气墙：将相机位置限制在模型边界内
-// 底面 = groundY + eyeHeight（防止穿地），顶面 = maxY + 合理余量（允许俯瞰但不飞太高）
+// 底面 = groundY + eyeHeight（防止穿地），顶面 = maxY + 最长边 × 0.5（允许高空俯瞰）
 // 水平 = 包围盒 ± margin（允许退到足够远查看全景）
 function clampCameraPosition() {
   if (!modelBounds || !config.boundary.enabled) return;
   const b = modelBounds;
   const margin = b.longest * config.boundary.marginMultiplier;
   const eyeHeight = config.boundary.eyeHeight;
-  const modelHeight = b.maxY - b.groundY;
-  // 顶面高度：模型顶部 + max(模型高度 × 0.3, 最长边 × 0.1)，允许俯瞰全景但不会飞太高
-  const yMax = b.maxY + Math.max(modelHeight * 0.3, b.longest * 0.1);
+  // 顶面高度：模型顶部 + 最长边 × 0.5，留足俯瞰空间
+  const yMax = b.maxY + b.longest * 0.5;
 
   const pos = camera.position;
   const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
@@ -913,13 +912,13 @@ function autoFrameModel() {
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
 
-  // 初始位置 = 模型前方，高度为模型中点，看向模型中心（外部视角，能看到全景）
+  // 初始位置 = 模型上方斜后方，俯瞰全景（确保在模型顶部以上，不会在下方）
   const modelHeight = b.maxY - b.groundY;
   const camX = cx;
-  const camY = b.groundY + Math.max(modelHeight * 0.5, config.boundary.eyeHeight);
-  const camZ = cz + longest * 1.2;
+  const camY = b.maxY + longest * 0.3; // 模型顶部上方，确保俯瞰
+  const camZ = cz + longest * 1.5;
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
-  // 朝向模型中心
+  // 朝向模型中心（略微俯视）
   const tx = cx, ty = b.groundY + modelHeight * 0.3, tz = cz;
   const fx = tx - camX, fy = ty - camY, fz = tz - camZ;
   const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
