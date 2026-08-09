@@ -1,8 +1,7 @@
 {
   "model": {
     "urls": [
-      "/api/model",
-      "https://gh-proxy.com/https://github.com/panhanmo/dongming-school-3d/releases/download/V1.0.0/point_cloud_6999_.+.+.+.splat"
+      "https://dongming3d-mx.oss-cn-beijing.aliyuncs.com/model.splat"
     ],
     "defaultView": {
       "position": { "x": 0, "y": 5, "z": 30 },
