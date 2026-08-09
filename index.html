@@ -549,10 +549,10 @@ const isMobile = detectMobile();
 // 检测 WebGL2 可用性（同时预创建带 preserveDrawingBuffer 的上下文）
 function acquireWebGL2Context() {
   // 【约束4】preserveDrawingBuffer 只能在创建 WebGLRenderer 时设定一次，运行时不修改。
-  // gsplat 的 WebGLRenderer 内部以 {antialias:false} 调用 getContext；为使截图可用且提升画质，
-  // 此处预先以 {antialias:true, preserveDrawingBuffer:true} 取得上下文，
+  // gsplat 的 WebGLRenderer 内部以 {antialias:false} 调用 getContext；为使截图可用，
+  // 此处预先以 {antialias:false, preserveDrawingBuffer:true} 取得上下文，
   // 后续 WebGLRenderer 再次 getContext 将返回同一上下文（属性以首次创建为准）。
-  const ctx = canvas.getContext('webgl2', { antialias: true, preserveDrawingBuffer: true, alpha: false, desynchronized: true });
+  const ctx = canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: true });
   return ctx;
 }
 
@@ -807,23 +807,22 @@ function computeModelBounds() {
 }
 
 // 空气墙：将相机位置限制在模型边界内
-  // gsplat.js 渲染中 Y 向下，所以"上方"= 更小 Y，"下方/地面"= 更大 Y
-  // 顶面（上限）= minY - 最长边×1.0（防止飞太高）
-  // 底面（下限）= groundY - eyeHeight（地面减眼高，防止穿地）
+  // 顶面（上限）= maxY + 最长边×0.5（防止飞太高）
+  // 底面（下限）= groundY + eyeHeight（地面+眼高，防止穿地）
   // 水平 = 包围盒 ± margin
   function clampCameraPosition() {
     if (!modelBounds || !config.boundary.enabled) return;
     const b = modelBounds;
     const margin = b.longest * config.boundary.marginMultiplier;
     const eyeHeight = config.boundary.eyeHeight;
-    // 上限（最高处）= minY - 最长边 × 1.0
-    const yCeiling = b.minY - b.longest * 1.0;
-    // 下限（地面+眼高）= groundY - eyeHeight（Y向下，眼高在地面之上=更小Y）
-    const yFloor = b.groundY - eyeHeight;
+    // 上限（最高处）= maxY + 最长边 × 0.5
+    const yCeiling = b.maxY + b.longest * 0.5;
+    // 下限（地面+眼高）
+    const yFloor = b.groundY + eyeHeight;
 
     const pos = camera.position;
     const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
-    const y = clamp(pos.y, yCeiling, yFloor);
+    const y = clamp(pos.y, yFloor, yCeiling);
     const z = clamp(pos.z, b.minZ - margin, b.maxZ + margin);
 
     if (x !== pos.x || y !== pos.y || z !== pos.z) {
@@ -946,14 +945,13 @@ function autoFrameModel() {
   const longest = b.longest;
 
   // 初始位置 = 模型上方斜后方，俯瞰全景
-  // gsplat.js 渲染中 Y 轴向下，所以"上方"= 更小的 Y 值（minY 方向）
   const modelHeight = b.maxY - b.minY; // 完整模型高度
   const camX = cx;
-  const camY = b.minY - longest * 0.8; // 向上 = minY 方向（渲染中 Y 向下）
-  const camZ = cz - longest * 0.5;     // 向前 = 靠近模型
+  const camY = b.maxY + longest * 0.5; // 模型上方
+  const camZ = cz - longest * 0.5;     // 靠近模型
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
-  // 朝向模型中心（Y向下，目标在地面以上 = 比地面更小的Y）
-  const tx = cx, ty = b.groundY - modelHeight * 0.3, tz = cz;
+  // 朝向模型中心
+  const tx = cx, ty = b.groundY + modelHeight * 0.3, tz = cz;
   const fx = tx - camX, fy = ty - camY, fz = tz - camZ;
   const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
   yaw = Math.atan2(fx / fl, fz / fl);
@@ -1147,7 +1145,7 @@ function applyMovement(dt) {
   // 桌面输入
   let inF = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
   let inR = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-  let inU = (keys.e ? 1 : 0) - (keys.q ? 1 : 0); // Y轴向下：E=下降(+Y)，Q=上升(-Y)
+  let inU = (keys.q ? 1 : 0) - (keys.e ? 1 : 0); // Q=上升(+Y)，E=下降(-Y)
   let speed = config.controls.moveSpeed;
 
   // 移动端摇杆输入（速度与偏移距离成正比，有上限）
@@ -1363,11 +1361,11 @@ function setupLookControls() {
       look.lastX = tt[0].clientX;
       look.lastY = tt[0].clientY;
     } else if (tt.length === 2 && pinch.active) {
-      // 双指上下滑动：升降相机 Y（Y轴向下，上滑=减小Y=升高）
+      // 双指上下滑动：升降相机 Y（上滑=升高=+Y）
       const curMidY = midY(tt[0], tt[1]);
       const dy = pinch.lastMidY - curMidY; // 上滑为正
       const speed = config.controls.elevationSpeed * 0.05;
-      const newY = camera.position.y - dy * speed; // Y向下：上滑减Y=升高
+      const newY = camera.position.y + dy * speed; // 上滑+Y=升高
       camera.position = new SPLAT.Vector3(camera.position.x, newY, camera.position.z);
       pinch.lastMidY = curMidY;
       pinch.lastDist = dist2(tt[0], tt[1]);
