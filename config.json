@@ -1,7 +1,7 @@
 {
   "model": {
     "urls": [
-      "https://dongming3d-mx.oss-cn-beijing.aliyuncs.com/model.splat"
+      "https://dongming3d-mx.oss-cn-beijing.aliyuncs.com/point_cloud_hange.spz"
     ],
     "defaultView": {
       "position": { "x": 0, "y": 5, "z": 30 },

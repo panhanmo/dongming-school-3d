@@ -983,6 +983,121 @@ function computeInitialScale() {
   return clamp(s, config.render.userScaleMin, config.render.userScaleMax);
 }
 
+/* ------------------- SPZ v4 解码器（ZSTD 压缩的高斯泼溅格式） ------------------- */
+// SPZ v4 格式：https://github.com/nianticlabs/spz
+// 结构：20字节头 + TOC + ZSTD压缩的属性流（positions/alphas/colors/scales/rotations）
+// 解码后转换为 gsplat.js 的 .splat 二进制格式（每点32字节）
+const SPZ_SH_C0 = 0.28209479177387814;
+
+async function decodeSpz(arrayBuffer) {
+  // 动态导入 fzstd（纯 JS ZSTD 解压器）
+  const fzstd = await import('https://cdn.jsdelivr.net/npm/fzstd@0.1.1/+esm');
+  const dv = new DataView(arrayBuffer);
+  const u8 = new Uint8Array(arrayBuffer);
+
+  // 解析头（20字节）
+  const magic = dv.getUint32(0, true);
+  if (magic !== 0x5053474e) throw new Error('非 SPZ 格式（magic 不匹配）');
+  const version = dv.getUint32(4, true);
+  if (version !== 4) throw new Error('不支持 SPZ v' + version + '，仅支持 v4');
+  const numPoints = dv.getUint32(8, true);
+  const shDegree = dv.getUint8(12);
+  const fractionalBits = dv.getUint8(13);
+  const numStreams = dv.getUint8(15);
+  const tocByteOffset = dv.getUint32(16, true);
+  console.log('[spz] numPoints=' + numPoints + ' fractionalBits=' + fractionalBits + ' streams=' + numStreams);
+
+  // 解析 TOC（每流16字节：compressedSize + decompressedSize，均为 uint64 LE）
+  const streamMeta = [];
+  let dataOffset = tocByteOffset + numStreams * 16;
+  for (let i = 0; i < numStreams; i++) {
+    const compressedSize = Number(dv.getBigUint64(tocByteOffset + i * 16, true));
+    const decompressedSize = Number(dv.getBigUint64(tocByteOffset + i * 16 + 8, true));
+    streamMeta.push({ compressedSize, decompressedSize, offset: dataOffset });
+    dataOffset += compressedSize;
+  }
+
+  // ZSTD 解压各属性流
+  const decompress = (idx) => {
+    const m = streamMeta[idx];
+    const compressed = u8.subarray(m.offset, m.offset + m.compressedSize);
+    return fzstd.decompress(compressed);
+  };
+
+  const positions = decompress(0);   // numPoints × 9 bytes (3 × 24-bit fixed point)
+  const alphas = decompress(1);      // numPoints × 1 byte
+  const colors = decompress(2);       // numPoints × 3 bytes (SH DC)
+  const scales = decompress(3);       // numPoints × 3 bytes (log2)
+  const rotations = decompress(4);   // numPoints × 4 bytes (smallest-three)
+
+  // 转换为 .splat 二进制格式（每点 32 字节）
+  const SPLAT_ROW_SIZE = 32;
+  const splatBuf = new ArrayBuffer(numPoints * SPLAT_ROW_SIZE);
+  const f32 = new Float32Array(splatBuf);
+  const u8out = new Uint8Array(splatBuf);
+  const posScale = 1 / (1 << fractionalBits);
+  const rotScale = 0.7071067811865476 / 511.0; // 1/sqrt(2) / 511
+
+  for (let i = 0; i < numPoints; i++) {
+    const pi = i * 9;       // positions 索引
+    const ci = i * 3;       // colors 索引
+    const si = i * 3;       // scales 索引
+    const ri = i * 4;       // rotations 索引
+    const oi = i * 8;       // .splat float32 行偏移（8 个 float32 = 32 字节）
+
+    // 位置：24-bit 有符号定点数 → float32
+    for (let c = 0; c < 3; c++) {
+      let v = positions[pi + c * 3] | (positions[pi + c * 3 + 1] << 8) | (positions[pi + c * 3 + 2] << 16);
+      v = (v << 8) >> 8; // 符号扩展 24-bit
+      f32[oi + c] = v * posScale;
+    }
+
+    // 缩放：uint8 log2 编码 → float32
+    f32[oi + 3] = Math.exp(scales[si] / 16.0 - 10.0);
+    f32[oi + 4] = Math.exp(scales[si + 1] / 16.0 - 10.0);
+    f32[oi + 5] = Math.exp(scales[si + 2] / 16.0 - 10.0);
+
+    // 颜色：SH DC 系数 → uint8 RGB + alpha
+    // SPZ 存储: stored = SH_DC * 0.15 + 0.5 (归一化到 0-1)
+    // 转换: color = 0.5 + SH_C0 * (stored - 0.5) / 0.15
+    const colorScale = SPZ_SH_C0 / 0.15;
+    const byteOffset = i * SPLAT_ROW_SIZE + 24; // 颜色在每行第 24-27 字节
+    for (let c = 0; c < 3; c++) {
+      const stored = colors[ci + c] / 255;
+      const color = (stored - 0.5) * colorScale + 0.5;
+      u8out[byteOffset + c] = Math.max(0, Math.min(255, Math.round(color * 255)));
+    }
+    u8out[byteOffset + 3] = alphas[i]; // alpha 已应用 sigmoid，直接使用
+
+    // 旋转：smallest-three 编码 → 四元数 → uint8
+    // spz 存储为 (x,y,z,w)，gsplat.js 期望 (w,x,y,z)
+    let comp = rotations[ri] | (rotations[ri + 1] << 8) | (rotations[ri + 2] << 16) | (rotations[ri + 3] << 24);
+    comp = comp >>> 0; // 无符号
+    const largest = comp >>> 30;
+    const q = [0, 0, 0, 0];
+    let sumSquares = 0;
+    for (let j = 3; j >= 0; j--) {
+      if (j !== largest) {
+        let v = (comp & 0x1ff) * rotScale;
+        if (comp & 0x200) v = -v;
+        comp = comp >>> 10;
+        q[j] = v;
+        sumSquares += v * v;
+      }
+    }
+    q[largest] = Math.sqrt(Math.max(0, 1 - sumSquares));
+    // .splat 格式：四元数存储为 uint8，(w,x,y,z) 顺序
+    const rotOffset = i * SPLAT_ROW_SIZE + 28;
+    u8out[rotOffset + 0] = Math.round(q[3] * 128 + 128) & 255; // w
+    u8out[rotOffset + 1] = Math.round(q[0] * 128 + 128) & 255; // x
+    u8out[rotOffset + 2] = Math.round(q[1] * 128 + 128) & 255; // y
+    u8out[rotOffset + 3] = Math.round(q[2] * 128 + 128) & 255; // z
+  }
+
+  console.log('[spz] 解码完成: ' + numPoints + ' 点, ' + (splatBuf.byteLength / 1048576).toFixed(1) + 'MB .splat');
+  return splatBuf;
+}
+
 /* -------------------------- 5. 模型加载（主/备）------------------------ */
 // 【约束6】多 URL 轮询加载，失败切换下一个 URL，必须重新实例 Scene，避免模型重叠。
 async function loadModelWithFallback() {
@@ -1024,12 +1139,19 @@ function loadModelOnce(url, isPrimary) {
       }
     };
 
-    xhr.onload = () => {
+    xhr.onload = async () => {
       if (settled) return;
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
+          let splatBuffer = xhr.response;
+          // .spz 格式：先解码为 .splat 二进制
+          if (url.toLowerCase().endsWith('.spz')) {
+            console.log('[model] 检测到 .spz 格式，开始解码...');
+            $('progressPct').textContent = '解码中...';
+            splatBuffer = await decodeSpz(xhr.response);
+          }
           // LoadFromArrayBuffer 是同步函数，直接调用，不包 Promise
-          SPLAT.Loader.LoadFromArrayBuffer(xhr.response, scene);
+          SPLAT.Loader.LoadFromArrayBuffer(splatBuffer, scene);
           settled = true;
           clearTimeout(timer);
           $('progressBar').style.width = '100%';
