@@ -6,9 +6,6 @@ using System.Threading;
 
 class SimpleServer
 {
-    // 模型远程地址（通过 gh-proxy 镜像加速，直连 GitHub 在国内极慢）
-    const string MODEL_REMOTE_URL = "https://gh-proxy.com/https://github.com/panhanmo/dongming-school-3d/releases/download/V1.0.0/point_cloud_6999_.+.+.+.splat";
-
     static void Main(string[] args)
     {
         int port = 8080;
@@ -153,10 +150,7 @@ class SimpleServer
         }
     }
 
-    // ====================== 模型代理（先下载到本地，再从本地读取） ======================
-    // 首次请求时从 GitHub（通过 gh-proxy）下载到本地 model.splat，后续直接读取本地文件。
-    static readonly object modelLock = new object();
-
+    // ====================== 模型读取（直接读取本地 model.splat） ======================
     static void HandleModelProxy(HttpListenerRequest req, HttpListenerResponse res, string root)
     {
         res.Headers.Add("Access-Control-Allow-Origin", "*");
@@ -167,54 +161,13 @@ class SimpleServer
 
         try
         {
-            // 首次下载：本地无文件则从 GitHub 下载
-            if (!File.Exists(localPath) || new FileInfo(localPath).Length < 1024)
+            if (!File.Exists(localPath))
             {
-                lock (modelLock)
-                {
-                    if (!File.Exists(localPath) || new FileInfo(localPath).Length < 1024)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine("[model-proxy] 本地无缓存，开始从 GitHub 下载...");
-                        Console.ResetColor();
-
-                        var request = (HttpWebRequest)WebRequest.Create(MODEL_REMOTE_URL);
-                        request.Method = "GET";
-                        request.AllowAutoRedirect = true;
-                        request.Timeout = 600000;
-                        request.ReadWriteTimeout = 600000;
-                        request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
-
-                        using (var response = request.GetResponse())
-                        using (var responseStream = response.GetResponseStream())
-                        using (var fileStream = File.Create(localPath + ".tmp"))
-                        {
-                            byte[] buffer = new byte[131072];
-                            int read;
-                            long total = 0;
-                            while ((read = responseStream.Read(buffer, 0, buffer.Length)) > 0)
-                            {
-                                fileStream.Write(buffer, 0, read);
-                                total += read;
-                                if (total % (10 * 1024 * 1024) < buffer.Length)
-                                {
-                                    Console.ForegroundColor = ConsoleColor.DarkYellow;
-                                    Console.Write("\r[model-proxy] 下载中 " + (total / 1024 / 1024) + " MB...   ");
-                                    Console.ResetColor();
-                                }
-                            }
-                            Console.WriteLine();
-                        }
-
-                        // 下载完成，重命名临时文件
-                        if (File.Exists(localPath)) File.Delete(localPath);
-                        File.Move(localPath + ".tmp", localPath);
-
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine("[model-proxy] 下载完成: " + new FileInfo(localPath).Length + " bytes");
-                        Console.ResetColor();
-                    }
-                }
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[model] 本地 model.splat 不存在!");
+                Console.ResetColor();
+                SendError(res, 404, "模型文件不存在: model.splat");
+                return;
             }
 
             long fileLen = new FileInfo(localPath).Length;
@@ -224,7 +177,7 @@ class SimpleServer
             {
                 res.ContentLength64 = fileLen;
                 Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine("[model-proxy] HEAD 200 " + fileLen + " bytes (local)");
+                Console.WriteLine("[model] HEAD 200 " + fileLen + " bytes (local)");
                 Console.ResetColor();
                 return;
             }
@@ -235,24 +188,22 @@ class SimpleServer
             {
                 byte[] buffer = new byte[131072];
                 int read;
-                long total = 0;
                 while ((read = fs.Read(buffer, 0, buffer.Length)) > 0)
                 {
                     res.OutputStream.Write(buffer, 0, read);
-                    total += read;
                 }
                 res.OutputStream.Flush();
             }
             Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[model-proxy] 200 " + fileLen + " bytes (local cache)");
+            Console.WriteLine("[model] 200 " + fileLen + " bytes (local)");
             Console.ResetColor();
         }
         catch (Exception e)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("[model-proxy] ERROR: " + e.Message);
+            Console.WriteLine("[model] ERROR: " + e.Message);
             Console.ResetColor();
-            SendError(res, 502, "模型加载失败: " + e.Message);
+            SendError(res, 502, "模型读取失败: " + e.Message);
         }
     }
 
