@@ -815,8 +815,8 @@ function computeModelBounds() {
     const b = modelBounds;
     const margin = b.longest * config.boundary.marginMultiplier;
     const eyeHeight = config.boundary.eyeHeight;
-    // 上限（最高处）= maxY + 最长边 × 0.8
-    const yCeiling = b.maxY + b.longest * 0.8;
+    // 上限（最高处）= maxY + 最长边 × 0.5
+    const yCeiling = b.maxY + b.longest * 0.5;
     // 下限（地面+眼高）
     const yFloor = b.groundY + eyeHeight;
 
@@ -947,7 +947,7 @@ function autoFrameModel() {
   // 初始位置 = 模型上方斜后方，俯瞰全景
   const modelHeight = b.maxY - b.minY; // 完整模型高度
   const camX = cx;
-  const camY = b.maxY + longest * 0.8; // 模型上方
+  const camY = b.maxY + longest * 0.5; // 模型上方
   const camZ = cz - longest * 0.5;     // 靠近模型
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
   // 朝向模型中心
