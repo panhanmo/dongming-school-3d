@@ -71,10 +71,10 @@ class SimpleServer
                 return;
             }
 
-            // -------- /api/model 代理端点：首次从 GitHub 下载到本地，后续从本地读取 --------
+            // -------- /api/model 代理端点：流式转发 GitHub 模型，不缓存本地 --------
             if (path == "/api/model")
             {
-                HandleModelProxy(req, res, root);
+                HandleModelProxy(req, res);
                 res.Close();
                 return;
             }
@@ -153,99 +153,64 @@ class SimpleServer
         }
     }
 
-    // ====================== 模型代理（先下载到本地，再从本地读取） ======================
-    // 首次请求时从 GitHub（通过 gh-proxy）下载到本地 model.splat，后续直接读取本地文件。
-    static readonly object modelLock = new object();
-
-    static void HandleModelProxy(HttpListenerRequest req, HttpListenerResponse res, string root)
+    // ====================== 模型代理（流式转发，不缓存本地） ======================
+    // 直接从 GitHub（通过 gh-proxy）流式转发给浏览器，不在本地保存任何文件。
+    static void HandleModelProxy(HttpListenerRequest req, HttpListenerResponse res)
     {
         res.Headers.Add("Access-Control-Allow-Origin", "*");
         res.Headers.Add("Accept-Ranges", "bytes");
         res.ContentType = "application/octet-stream";
 
-        string localPath = Path.Combine(root, "model.splat");
-
         try
         {
-            // 首次下载：本地无文件则从 GitHub 下载
-            if (!File.Exists(localPath) || new FileInfo(localPath).Length < 1024)
+            var request = (HttpWebRequest)WebRequest.Create(MODEL_REMOTE_URL);
+            request.Method = "GET";
+            request.AllowAutoRedirect = true;
+            request.Timeout = 300000;
+            request.ReadWriteTimeout = 300000;
+            request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
+
+            // HEAD 请求：只获取文件大小，不下载 body
+            if (req.HttpMethod == "HEAD")
             {
-                lock (modelLock)
+                request.Method = "HEAD";
+                using (var response = request.GetResponse())
                 {
-                    if (!File.Exists(localPath) || new FileInfo(localPath).Length < 1024)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.WriteLine("[model-proxy] 本地无缓存，开始从 GitHub 下载...");
-                        Console.ResetColor();
-
-                        var request = (HttpWebRequest)WebRequest.Create(MODEL_REMOTE_URL);
-                        request.Method = "GET";
-                        request.AllowAutoRedirect = true;
-                        request.Timeout = 600000;
-                        request.ReadWriteTimeout = 600000;
-                        request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)";
-
-                        using (var response = request.GetResponse())
-                        using (var responseStream = response.GetResponseStream())
-                        using (var fileStream = File.Create(localPath + ".tmp"))
-                        {
-                            byte[] buffer = new byte[131072];
-                            int read;
-                            long total = 0;
-                            while ((read = responseStream.Read(buffer, 0, buffer.Length)) > 0)
-                            {
-                                fileStream.Write(buffer, 0, read);
-                                total += read;
-                                if (total % (10 * 1024 * 1024) < buffer.Length)
-                                {
-                                    Console.ForegroundColor = ConsoleColor.DarkYellow;
-                                    Console.Write("\r[model-proxy] 下载中 " + (total / 1024 / 1024) + " MB...   ");
-                                    Console.ResetColor();
-                                }
-                            }
-                            Console.WriteLine();
-                        }
-
-                        // 下载完成，重命名临时文件
-                        if (File.Exists(localPath)) File.Delete(localPath);
-                        File.Move(localPath + ".tmp", localPath);
-
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine("[model-proxy] 下载完成: " + new FileInfo(localPath).Length + " bytes");
-                        Console.ResetColor();
-                    }
+                    res.ContentLength64 = response.ContentLength;
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine("[model-proxy] HEAD 200 " + response.ContentLength + " bytes (from GitHub)");
+                    Console.ResetColor();
+                    return;
                 }
             }
 
-            long fileLen = new FileInfo(localPath).Length;
-
-            // HEAD 请求：返回文件大小
-            if (req.HttpMethod == "HEAD")
+            // GET 请求：流式转发
+            using (var response = request.GetResponse())
+            using (var responseStream = response.GetResponseStream())
             {
-                res.ContentLength64 = fileLen;
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine("[model-proxy] HEAD 200 " + fileLen + " bytes (local)");
-                Console.ResetColor();
-                return;
-            }
+                if (response.ContentLength > 0)
+                    res.ContentLength64 = response.ContentLength;
 
-            // GET 请求：从本地文件读取
-            res.ContentLength64 = fileLen;
-            using (var fs = File.OpenRead(localPath))
-            {
                 byte[] buffer = new byte[131072];
                 int read;
                 long total = 0;
-                while ((read = fs.Read(buffer, 0, buffer.Length)) > 0)
+                while ((read = responseStream.Read(buffer, 0, buffer.Length)) > 0)
                 {
                     res.OutputStream.Write(buffer, 0, read);
                     total += read;
+                    if (total % (10 * 1024 * 1024) < buffer.Length)
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkYellow;
+                        Console.Write("\r[model-proxy] 已转发 " + (total / 1024 / 1024) + " MB...   ");
+                        Console.ResetColor();
+                    }
                 }
+                Console.WriteLine();
                 res.OutputStream.Flush();
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("[model-proxy] 200 " + total + " bytes (streamed from GitHub)");
+                Console.ResetColor();
             }
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[model-proxy] 200 " + fileLen + " bytes (local cache)");
-            Console.ResetColor();
         }
         catch (Exception e)
         {
