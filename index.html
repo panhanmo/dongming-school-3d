@@ -1094,21 +1094,14 @@ function startRenderLoop() {
     smoothPitch += (pitch - smoothPitch) * lookLerp;
     applyCameraRotation(); // 将 smoothYaw/smoothPitch 写入 camera.rotation
 
-    // ---- 动态分辨率：运动时降精度保 FPS，停止后恢复高精度并提示 ----
+    // ---- 渲染精度：始终使用用户设定精度，移动时不降级 ----
     const lookDelta = Math.abs(yaw - smoothYaw) + Math.abs(pitch - smoothPitch);
     const lookSettling = lookDelta > 0.003;
     const currentlyMoving = moved || lookSettling;
     if (currentlyMoving && !isMoving) {
-      // 进入运动状态：降低渲染精度
       isMoving = true;
-      renderScale = config.render.motionScale;
-      resize();
     } else if (!currentlyMoving && isMoving) {
-      // 运动停止：恢复用户设定精度，提示
       isMoving = false;
-      renderScale = userRenderScale;
-      resize();
-      showHint(config.ui.qualityHintText);
     }
 
     renderer.render(scene, camera);
