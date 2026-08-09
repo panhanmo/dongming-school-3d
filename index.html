@@ -808,17 +808,16 @@ function computeModelBounds() {
 
 // 空气墙：将相机位置限制在模型边界内
   // 顶面（上限）= maxY + 最长边×0.5（防止飞太高）
-  // 底面（下限）= groundY + eyeHeight（地面+眼高，防止穿地）
+  // 底面（下限）= minY - 最长边×0.3（允许从模型下方仰视）
   // 水平 = 包围盒 ± margin
   function clampCameraPosition() {
     if (!modelBounds || !config.boundary.enabled) return;
     const b = modelBounds;
     const margin = b.longest * config.boundary.marginMultiplier;
-    const eyeHeight = config.boundary.eyeHeight;
     // 上限（最高处）= maxY + 最长边 × 0.5
     const yCeiling = b.maxY + b.longest * 0.5;
-    // 下限（地面+眼高）
-    const yFloor = b.groundY + eyeHeight;
+    // 下限（模型下方，允许仰视）
+    const yFloor = b.minY - b.longest * 0.3;
 
     const pos = camera.position;
     const x = clamp(pos.x, b.minX - margin, b.maxX + margin);
@@ -944,14 +943,14 @@ function autoFrameModel() {
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
 
-  // 初始位置 = 模型正下方，仰视模型
+  // 初始位置 = 模型正下方（低于模型最低点），仰视模型
   const modelHeight = b.maxY - b.minY; // 完整模型高度
   const camX = cx;
-  const camY = b.groundY + config.boundary.eyeHeight; // 地面+眼高
-  const camZ = cz;                                     // 模型正下方
+  const camY = b.minY - longest * 0.3; // 模型正下方（低于最低点）
+  const camZ = cz;
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
-  // 朝向模型中心上方
-  const tx = cx, ty = b.groundY + modelHeight * 0.5, tz = cz;
+  // 朝向模型中心
+  const tx = cx, ty = b.minY + modelHeight * 0.5, tz = cz;
   const fx = tx - camX, fy = ty - camY, fz = tz - camZ;
   const fl = Math.max(1e-6, Math.sqrt(fx * fx + fy * fy + fz * fz));
   yaw = Math.atan2(fx / fl, fz / fl);
@@ -966,7 +965,7 @@ function autoFrameModel() {
   const speedScale = Math.max(1, longest / 50);
   config.controls.moveSpeed = clamp(config.controls.moveSpeed * speedScale, config.controls.moveSpeedMin, config.controls.moveSpeedMax);
   config.controls.elevationSpeed = Math.max(config.controls.elevationSpeed, 5.0 * speedScale);
-  console.log('[autoFrame] center=(' + cx + ',' + cz + ') groundY=' + b.groundY.toFixed(2) + ' cam=(' + camX + ',' + camY + ',' + camZ + ') moveSpeed=' + config.controls.moveSpeed.toFixed(1));
+  console.log('[autoFrame] center=(' + cx + ',' + cz + ') minY=' + b.minY.toFixed(2) + ' cam=(' + camX + ',' + camY + ',' + camZ + ') moveSpeed=' + config.controls.moveSpeed.toFixed(1));
 }
 
 // 初始渲染缩放评估：硬件并发数 / 屏幕 / 是否移动设备
