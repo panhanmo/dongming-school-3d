@@ -1291,7 +1291,7 @@ function initPointCloud() {
   }
   pointCloudProgram = prog;
 
-  // 从场景对象提取点数据
+  // 从场景对象提取点数据（需应用对象的 transform 矩阵，包含 fixModelOrientation 的旋转）
   let allPos = [];
   let allCol = [];
   if (scene && scene.objects) {
@@ -1299,14 +1299,22 @@ function initPointCloud() {
       if (!obj.data || !obj.data.positions) continue;
       const pos = obj.data.positions;
       const vc = obj.data.vertexCount;
+      // 应用对象变换矩阵（旋转/缩放/平移）到每个点位置
+      const m = obj.transform.buffer;  // Float32Array(16), column-major
+      const tPos = new Float32Array(vc * 3);
+      for (let i = 0; i < vc; i++) {
+        const x = pos[3*i], y = pos[3*i+1], z = pos[3*i+2];
+        tPos[3*i]   = x*m[0] + y*m[4] + z*m[8]  + m[12];
+        tPos[3*i+1] = x*m[1] + y*m[5] + z*m[9]  + m[13];
+        tPos[3*i+2] = x*m[2] + y*m[6] + z*m[10] + m[14];
+      }
       // 颜色：先检查是否有 colors 数据
       let col = obj.data.colors;
       if (!col) {
-        // 无颜色数据时用白色
         col = new Uint8Array(vc * 4);
         for (let i = 0; i < vc; i++) { col[i*4]=255; col[i*4+1]=255; col[i*4+2]=255; col[i*4+3]=255; }
       }
-      allPos.push(pos);
+      allPos.push(tPos);
       allCol.push(col);
     }
   }
