@@ -943,10 +943,10 @@ function autoFrameModel() {
   const cz = (b.minZ + b.maxZ) / 2;
   const longest = b.longest;
 
-  // 初始位置 = 模型正下方（低于模型最低点），仰视模型
+  // 初始位置 = 模型正上方（网格另一边），俯视模型
   const modelHeight = b.maxY - b.minY; // 完整模型高度
   const camX = cx;
-  const camY = b.minY - longest * 0.3; // 模型正下方（低于最低点）
+  const camY = b.maxY + longest * 0.3; // 模型正上方（高于最高点）
   const camZ = cz;
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
   // 朝向模型中心
