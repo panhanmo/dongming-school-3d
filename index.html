@@ -148,6 +148,30 @@
   /* 锁定指针时隐藏 Canvas 上的光标；Esc 退出后浏览器自动恢复 */
   #canvas.locked, body.pl-locked #canvas { cursor: none !important; }
 
+  /* ============================ 点云切换按钮 ============================ */
+  #pointCloudBtn {
+    position: fixed; z-index: 36;
+    top: calc(env(safe-area-inset-top) + 12px);
+    right: calc(env(safe-area-inset-right) + 16px);
+    width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(0,0,0,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    color: rgba(255,255,255,0.7); font-size: 18px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; backdrop-filter: blur(6px);
+    transition: transform 0.15s ease, background 0.2s ease, color 0.2s ease;
+  }
+  #pointCloudBtn:active { transform: scale(0.92); }
+  #pointCloudBtn.active {
+    background: rgba(120,180,255,0.35);
+    color: #fff;
+    border-color: rgba(120,180,255,0.6);
+  }
+  #pointCanvas {
+    position: fixed; inset: 0; width: 100%; height: 100%; display: none;
+    z-index: 0;
+  }
+
   /* ============================ 拍照按钮 ============================ */
   #photoBtn {
     position: fixed; z-index: 30;
@@ -400,6 +424,12 @@
   <!-- 拍照按钮 -->
   <button id="photoBtn" aria-label="拍照">📷</button>
 
+  <!-- 点云切换按钮（右上角） -->
+  <button id="pointCloudBtn" aria-label="点云模式">⬡</button>
+
+  <!-- 点云渲染画布 -->
+  <canvas id="pointCanvas"></canvas>
+
   <!-- 设置按钮 -->
   <button id="settingsBtn" aria-label="设置">⚙</button>
 
@@ -534,6 +564,13 @@ const bgImageCache = {};     // 已加载的 Image 对象缓存
 
 // 渲染循环
 let lastFrameTime = performance.now();
+
+// 点云渲染状态
+let pointCloudMode = false;      // 是否处于点云模式
+let pointCloudGL = null;          // WebGL2 上下文
+let pointCloudProgram = null;     // 着色器程序
+let pointCloudBuffers = null;     // { positionBuf, colorBuf, count }
+let pointCanvas = null;
 let rafId = null;
 
 /* ----------------------------- 工具函数 -------------------------------- */
@@ -1195,6 +1232,169 @@ function loadModelOnce(url, isPrimary) {
   });
 }
 
+/* ----------------------- 5.5 点云渲染器（WebGL） ----------------------- */
+// 从场景中提取所有高斯点的位置和颜色，用 WebGL POINTS 渲染为点状云
+function initPointCloud() {
+  pointCanvas = $('pointCanvas');
+  const gl = pointCanvas.getContext('webgl2', { antialias: true, preserveDrawingBuffer: true });
+  if (!gl) { console.warn('[pointCloud] WebGL2 不可用'); return false; }
+  pointCloudGL = gl;
+
+  // 顶点着色器：应用 viewProj 矩阵，设置点大小
+  const vsSrc = `#version 300 es
+    precision highp float;
+    in vec3 aPosition;
+    in vec4 aColor;
+    uniform mat4 uViewProj;
+    uniform float uPointSize;
+    out vec4 vColor;
+    void main() {
+      vec4 pos = uViewProj * vec4(aPosition, 1.0);
+      gl_Position = pos;
+      gl_PointSize = uPointSize;
+      vColor = aColor;
+    }`;
+  // 片段着色器：圆形点（带柔和边缘）
+  const fsSrc = `#version 300 es
+    precision highp float;
+    in vec4 vColor;
+    out vec4 fragColor;
+    void main() {
+      vec2 c = gl_PointCoord - vec2(0.5);
+      float d = dot(c, c);
+      if (d > 0.25) discard;
+      float alpha = vColor.a * smoothstep(0.25, 0.15, d);
+      fragColor = vec4(vColor.rgb, alpha);
+    }`;
+
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      console.error('[pointCloud] shader error:', gl.getShaderInfoLog(sh));
+      return null;
+    }
+    return sh;
+  };
+  const vs = compile(gl.VERTEX_SHADER, vsSrc);
+  const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+  if (!vs || !fs) return false;
+
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error('[pointCloud] link error:', gl.getProgramInfoLog(prog));
+    return false;
+  }
+  pointCloudProgram = prog;
+
+  // 从场景对象提取点数据
+  let allPos = [];
+  let allCol = [];
+  if (scene && scene.objects) {
+    for (const obj of scene.objects) {
+      if (!obj.data || !obj.data.positions) continue;
+      const pos = obj.data.positions;
+      const vc = obj.data.vertexCount;
+      // 颜色：先检查是否有 colors 数据
+      let col = obj.data.colors;
+      if (!col) {
+        // 无颜色数据时用白色
+        col = new Uint8Array(vc * 4);
+        for (let i = 0; i < vc; i++) { col[i*4]=255; col[i*4+1]=255; col[i*4+2]=255; col[i*4+3]=255; }
+      }
+      allPos.push(pos);
+      allCol.push(col);
+    }
+  }
+  if (allPos.length === 0) { console.warn('[pointCloud] 场景无点数据'); return false; }
+
+  // 合并所有位置和颜色到单个缓冲区
+  let totalCount = 0;
+  for (const p of allPos) totalCount += p.length / 3;
+  const posBuf = new Float32Array(totalCount * 3);
+  const colBuf = new Uint8Array(totalCount * 4);
+  let pi = 0, ci = 0;
+  for (let i = 0; i < allPos.length; i++) {
+    posBuf.set(allPos[i], pi); pi += allPos[i].length;
+    colBuf.set(allCol[i], ci); ci += allCol[i].length;
+  }
+
+  const posBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, posBuf, gl.STATIC_DRAW);
+  const colBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, colBuf, gl.STATIC_DRAW);
+
+  pointCloudBuffers = { posBuffer, colBuffer, count: totalCount };
+  console.log('[pointCloud] 初始化完成: ' + totalCount + ' 点');
+  return true;
+}
+
+function resizePointCanvas() {
+  if (!pointCanvas || !pointCloudGL) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.floor(window.innerWidth * dpr);
+  const h = Math.floor(window.innerHeight * dpr);
+  if (pointCanvas.width !== w || pointCanvas.height !== h) {
+    pointCanvas.width = w;
+    pointCanvas.height = h;
+  }
+}
+
+function renderPointCloud() {
+  const gl = pointCloudGL;
+  if (!gl || !pointCloudProgram || !pointCloudBuffers) return;
+  resizePointCanvas();
+  gl.viewport(0, 0, pointCanvas.width, pointCanvas.height);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  gl.useProgram(pointCloudProgram);
+  // 使用 gsplat.js 的 viewProj 矩阵
+  const vp = camera.data.viewProj.buffer;
+  gl.uniformMatrix4fv(gl.getUniformLocation(pointCloudProgram, 'uViewProj'), false, vp);
+  // 点大小：根据渲染分辨率自适应
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  gl.uniform1f(gl.getUniformLocation(pointCloudProgram, 'uPointSize'), 2.0 * dpr);
+
+  // 绑定位置属性
+  gl.bindBuffer(gl.ARRAY_BUFFER, pointCloudBuffers.posBuffer);
+  const posLoc = gl.getAttribLocation(pointCloudProgram, 'aPosition');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+  // 绑定颜色属性
+  gl.bindBuffer(gl.ARRAY_BUFFER, pointCloudBuffers.colBuffer);
+  const colLoc = gl.getAttribLocation(pointCloudProgram, 'aColor');
+  gl.enableVertexAttribArray(colLoc);
+  gl.vertexAttribPointer(colLoc, 4, gl.UNSIGNED_BYTE, true, 0, 0);
+
+  gl.drawArrays(gl.POINTS, 0, pointCloudBuffers.count);
+}
+
+function togglePointCloud() {
+  pointCloudMode = !pointCloudMode;
+  const btn = $('pointCloudBtn');
+  if (pointCloudMode) {
+    if (!pointCloudGL) {
+      if (!initPointCloud()) { pointCloudMode = false; return; }
+    }
+    btn.classList.add('active');
+    pointCanvas.style.display = 'block';
+    canvas.style.display = 'none';
+  } else {
+    btn.classList.remove('active');
+    pointCanvas.style.display = 'none';
+    canvas.style.display = 'block';
+  }
+}
+
 /* ----------------------------- 6. 渲染循环 ----------------------------- */
 function startRenderLoop() {
   // 取消已有渲染循环，防止 HMR/重复初始化导致多个 RAF 循环并行
@@ -1226,7 +1426,13 @@ function startRenderLoop() {
       isMoving = false;
     }
 
-    renderer.render(scene, camera);
+    // 点云模式：跳过gsplat渲染（节省GPU），仅更新相机矩阵
+    if (pointCloudMode) {
+      camera.update();
+      renderPointCloud();
+    } else {
+      renderer.render(scene, camera);
+    }
 
     // 空气墙约束：每帧检查相机位置是否越界（约束：每帧应用 Y 轴高度限制）
     clampCameraPosition();
@@ -1320,6 +1526,8 @@ function resize() {
     gridCanvas.width = Math.max(1, Math.floor(w * dpr * renderScale));
     gridCanvas.height = Math.max(1, Math.floor(h * dpr * renderScale));
   }
+  // 点云画布同步调整
+  resizePointCanvas();
   // 补偿 renderScale 对焦距的影响：fx/fy 同步缩放，FOV 保持恒定
   if (camera && camera.data) {
     camera.data.fx = BASE_FX * renderScale;
@@ -1699,6 +1907,10 @@ function setupPerfMonitor() {
 // 【约束4】截图依赖初始化时设定的 preserveDrawingBuffer:true，运行时不修改。
 // 先渲染一帧保证最新，再以 canvas.toDataURL 取得纯净画面（不含任何 UI 元素）。
 function captureSceneDataUrl() {
+  if (pointCloudMode && pointCanvas) {
+    renderPointCloud();
+    return pointCanvas.toDataURL('image/png');
+  }
   if (renderer && scene && camera) renderer.render(scene, camera);
   return canvas.toDataURL('image/png');
 }
@@ -1707,13 +1919,15 @@ function captureSceneDataUrl() {
 function composePhoto(userText) {
   // 取得纯净场景截图（同步可用，因 preserveDrawingBuffer 已开启），同时刷新最新帧
   captureSceneDataUrl();
+  // 点云模式用 pointCanvas，否则用 gsplat canvas
+  const srcCanvas = (pointCloudMode && pointCanvas) ? pointCanvas : canvas;
   const off = document.createElement('canvas');
   // 分辨率与当前渲染分辨率一致；DPR 上限由 config 限制，防文件过大
-  off.width = canvas.width;
-  off.height = canvas.height;
+  off.width = srcCanvas.width;
+  off.height = srcCanvas.height;
   const ctx = off.getContext('2d');
   // 将 3D 画布绘制到离屏画布（preserveDrawingBuffer 保证可读）
-  ctx.drawImage(canvas, 0, 0, off.width, off.height);
+  ctx.drawImage(srcCanvas, 0, 0, off.width, off.height);
   // 如有选中背景，绘制在 3D 场景之后（仅填充透明区域）
   if (selectedBg) {
     const bgImg = getBgImage(selectedBg);
@@ -1802,12 +2016,13 @@ function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight, align) {
 // 模态框实时预览（降采样绘制以节省性能）
 function updatePreview() {
   const pc = $('previewCanvas');
+  const srcCanvas = (pointCloudMode && pointCanvas) ? pointCanvas : canvas;
   const W = Math.min(360, window.innerWidth - 80);
-  const ratio = canvas.height ? canvas.height / canvas.width : 0.5625;
+  const ratio = srcCanvas.height ? srcCanvas.height / srcCanvas.width : 0.5625;
   const H = Math.round(W * ratio);
   pc.width = W; pc.height = H;
   const ctx = pc.getContext('2d');
-  ctx.drawImage(canvas, 0, 0, W, H);
+  ctx.drawImage(srcCanvas, 0, 0, W, H);
   // 预览中也应用选中背景
   if (selectedBg) {
     const bgImg = getBgImage(selectedBg);
@@ -1937,6 +2152,15 @@ async function main() {
   // 模型加载完成后自动取景（将相机定位到模型中心）
   autoFrameModel();
 
+  // 重置点云渲染器（新模型加载后需要重新提取点数据）
+  pointCloudGL = null;
+  pointCloudProgram = null;
+  pointCloudBuffers = null;
+  if (pointCloudMode) {
+    // 如果已开启点云模式，重新初始化
+    initPointCloud();
+  }
+
   // autoFrameModel 可能根据模型尺寸调整 moveSpeed，同步到设置滑块
   const msSlider = $('moveSpeedSlider');
   const msValueEl = $('moveSpeedValue');
@@ -1960,6 +2184,7 @@ async function main() {
 /* --------------------------- 20. 拍照 UI 绑定 ------------------------- */
 function setupPhotoUI() {
   $('photoBtn').addEventListener('click', openModal);
+  $('pointCloudBtn').addEventListener('click', togglePointCloud);
   $('btnSave').addEventListener('click', () => { exportPhoto(null); closeModal(); });
   $('btnWith').addEventListener('click', () => { exportPhoto($('photoInput').value); closeModal(); });
   $('photoInput').addEventListener('input', updatePreview);
