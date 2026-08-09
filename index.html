@@ -948,7 +948,7 @@ function autoFrameModel() {
   const modelHeight = b.maxY - b.minY; // 完整模型高度
   const camX = cx;
   const camY = b.maxY + longest * 0.5; // 模型上方
-  const camZ = cz - longest * 0.5;     // 靠近模型
+  const camZ = cz + longest * 0.5;     // 网格另一侧
   camera.position = new SPLAT.Vector3(camX, camY, camZ);
   // 朝向模型中心
   const tx = cx, ty = b.groundY + modelHeight * 0.3, tz = cz;
