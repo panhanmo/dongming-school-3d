@@ -321,7 +321,22 @@
     border: 1px solid rgba(255,255,255,0.15);
     border-radius: 12px; padding: 18px;
   }
-  #modal .prompt { font-size: 14px; opacity: 0.85; margin-bottom: 10px; }
+  #modal .prompt { font-size: 14px; opacity: 0.85; }
+  #modal .modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  #modal .hd-badge {
+    flex-shrink: 0;
+    padding: 2px 8px; border-radius: 4px;
+    background: linear-gradient(135deg, rgba(120,180,255,0.5), rgba(100,200,180,0.5));
+    border: 1px solid rgba(120,180,255,0.4);
+    font-size: 10px; font-weight: 700; letter-spacing: 1px;
+    color: #fff;
+  }
+  #modal .modal-tips {
+    font-size: 12px; opacity: 0.55; margin-bottom: 12px; line-height: 1.5;
+  }
   #modal textarea {
     width: 100%; height: 70px; resize: none;
     background: rgba(255,255,255,0.08); color: #fff;
@@ -462,7 +477,11 @@
   <!-- 文字输入模态框 -->
   <div id="modal">
     <div class="card">
-      <div class="prompt" id="photoPrompt">写下你想留在东明的话</div>
+      <div class="modal-header">
+        <div class="prompt" id="photoPrompt">写下你想留在东明的话</div>
+        <span class="hd-badge">HD</span>
+      </div>
+      <div class="modal-tips" id="modalTips">先调整好角度再拍照，将自动以最高画质渲染</div>
       <textarea id="photoInput" maxlength="30" placeholder=""></textarea>
       <div class="bg-section">
         <div class="bg-label">选择背景</div>
@@ -1925,6 +1944,15 @@ function captureSceneDataUrl() {
 
 // 在离屏 canvas 上合成：截图 + 背景 + 水印 + 自定义文字（自动换行）
 function composePhoto(userText) {
+  // 拍照时使用最高渲染精度，保证出图清晰
+  const savedScale = renderScale;
+  const maxScale = config.render.userScaleMax || 3.0;
+  const needUpgrade = !pointCloudMode && renderScale < maxScale;
+  if (needUpgrade) {
+    renderScale = maxScale;
+    resize();
+  }
+
   // 取得纯净场景截图（同步可用，因 preserveDrawingBuffer 已开启），同时刷新最新帧
   captureSceneDataUrl();
   // 点云模式用 pointCanvas，否则用 gsplat canvas
@@ -1936,6 +1964,12 @@ function composePhoto(userText) {
   const ctx = off.getContext('2d');
   // 将 3D 画布绘制到离屏画布（preserveDrawingBuffer 保证可读）
   ctx.drawImage(srcCanvas, 0, 0, off.width, off.height);
+
+  // 恢复原始渲染精度
+  if (needUpgrade) {
+    renderScale = savedScale;
+    resize();
+  }
   // 如有选中背景，绘制在 3D 场景之后（仅填充透明区域）
   if (selectedBg) {
     const bgImg = getBgImage(selectedBg);
@@ -2045,6 +2079,15 @@ function updatePreview() {
 
 /* ----------------------------- 15. 导出 / 分享 ------------------------ */
 async function exportPhoto(userText) {
+  // 显示渲染中状态
+  const tips = $('modalTips');
+  const origTips = tips.textContent;
+  tips.textContent = '正在以最高画质渲染…';
+  tips.style.opacity = '0.9';
+
+  // 等一帧让 UI 更新
+  await new Promise(r => requestAnimationFrame(r));
+
   const composed = composePhoto(userText);
   const dataUrl = composed.toDataURL('image/png');
   const filename = `dongming_2026_${Date.now()}.png`;
@@ -2073,12 +2116,25 @@ async function exportPhoto(userText) {
     a.click();
     a.remove();
   }
+
+  // 恢复提示文案
+  tips.textContent = origTips;
+  tips.style.opacity = '';
 }
 
 /* --------------------------- 16. 模态框开关 --------------------------- */
 function openModal() {
   modalOpen = true;                       // 跳过触摸阻止逻辑，保证输入框可用
   $('modal').classList.add('open');
+  // 根据当前渲染精度给出不同提示
+  const tips = $('modalTips');
+  if (pointCloudMode) {
+    tips.textContent = '点云模式拍照 · 可拖动预览图查看效果';
+  } else if (renderScale < (config.render.userScaleMax || 3.0)) {
+    tips.textContent = '当前预览为流畅模式，拍照将自动升级到最高画质';
+  } else {
+    tips.textContent = '已处于最高画质，可直接拍照保存';
+  }
   setTimeout(updatePreview, 30);
   $('photoInput').focus({ preventScroll: true });
 }
@@ -2186,6 +2242,8 @@ async function main() {
   setTimeout(() => {
     $('loading').classList.add('fade-out');
     showHint();
+    // 3秒后提示拍照功能
+    setTimeout(() => showHint('点击右下角 📷 拍下属于你的东明纪念照'), config.ui.operateHintDuration + 500);
   }, 300);
 }
 
